@@ -195,10 +195,16 @@ func callerOutsideLogx() string {
 		if fn == nil {
 			break
 		}
-		// 内部帧判定：按本 module 的函数名路径片段匹配（覆盖根包与
-		// hlog/hertzlog/shutdown 子包）。改 module 路径时必须同步这里。
-		if strings.Contains(fn.Name(), "/ekit-logx") {
-			continue
+		// 内部帧判定：按函数名里的 module 路径前缀匹配日志实现自身——
+		// 根包、hlog/hertzlog 子包、以及内/外测试包。internal/ 下的测试
+		// 探针（logxcallertest）不属于实现，必须穿透。改 module 路径时
+		// 必须同步这里。
+		if i := strings.Index(fn.Name(), "/ekit-logx"); i >= 0 {
+			rest := fn.Name()[i+len("/ekit-logx"):]
+			if rest == "" || rest[0] == '.' || rest[0] == '_' ||
+				strings.HasPrefix(rest, "/hlog") || strings.HasPrefix(rest, "/hertzlog") {
+				continue
+			}
 		}
 		if isSkipFile(skipFiles, file) {
 			continue
