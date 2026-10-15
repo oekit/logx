@@ -30,6 +30,7 @@ logrus/zap/zerolog）可整体替换。附带优雅关停管理器 `shutdown`。
 | 根包 | 接口 + std/slog 两内置后端 + `MultiSink`/`FileSink`/`RotatingSink` 多目标输出 |
 | `hlog` | Hertz hlog 后端适配 |
 | `hertzlog` | hertz-contrib 的 logrus/zap/zerolog/slog 桥接 |
+| `kitexlog` | Kitex klog→logx 桥接（自 oekit/kitex 迁入；携带 cloudwego/kitex 依赖，按需引入） |
 | `shutdown` | 优雅关停管理器：顺序 job、drain 超时、幂等 |
 | `internal/logxcallertest` | caller 归属端到端测试探针 |
 
@@ -62,7 +63,7 @@ var bad = logx.WithService("hardcoded")
 
 - kv 结构化风格是默认规范；`LOG_LEVEL` 环境变量统一控制所有后端
 - `MultiSink`/`FileSink`/`RotatingSink` 支持同时写 stdout + 轮转文件、自定义 Loki/OTLP 后端
-- 本仓零矩阵内依赖；hertzlog 子包的 hertz-contrib 桥接按需引入
+- 根包零矩阵内依赖；`hertzlog` 子包的 hertz-contrib 桥接、`kitexlog` 子包的 kitex 依赖均按需引入
 
 
 ## 矩阵总览（23 活跃模块，自动生成）

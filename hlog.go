@@ -13,7 +13,7 @@ type HlogBacked interface {
 
 // IsHlogBacked 检查 Logger 是否基于 hlog 实现。
 //
-// 将 hlog 后端的 Logger 传入 hertz.NewLogger 或 kitex.NewLogger 会形成
+// 将 hlog 后端的 Logger 传入 hertz.NewLogger 或 kitexlog.NewLogger 会形成
 // adapter → logx → hlog → adapter 的无限递归，导致栈溢出和进程挂死。
 // 此函数供框架适配层做运行时防御。
 func IsHlogBacked(l Logger) bool {

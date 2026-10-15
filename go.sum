@@ -8,6 +8,8 @@ github.com/cloudwego/base64x v0.1.6 h1:t11wG9AECkCDk5fMSoxmufanudBtJ+/HemLstXDLI
 github.com/cloudwego/base64x v0.1.6/go.mod h1:OFcloc187FXDaYHvrNIjxSe8ncn0OOM8gEHfghB2IPU=
 github.com/cloudwego/hertz v0.10.6 h1:VXUO0RdycrYOv8x2JgbQCJh2ovTrkRM6tS4isHN9dwI=
 github.com/cloudwego/hertz v0.10.6/go.mod h1:9Kkpj+fpkWLaKEnoil1Mnp/oxWp9iYx/mUk+fViqQ3E=
+github.com/cloudwego/kitex v0.16.4 h1:x/HwNdlP6HEXr/xUBtLa6mxKKQPjLIaw0xWtThhqkLY=
+github.com/cloudwego/kitex v0.16.4/go.mod h1:Cs38y1qf+gdv3Vw6KmD+Wk3hvRS4EBx8Fu8dm6OYKeU=
 github.com/hertz-contrib/logger/logrus v1.0.1 h1:1iFu/L92QlFSDXUn77WJL32dk/5HBzAUziG1OqcNMeE=
 github.com/hertz-contrib/logger/logrus v1.0.1/go.mod h1:SqDYLwVq5hTItYqimgZQbFCYPOIGNvBTq0Ip2OQwMcY=
 github.com/hertz-contrib/logger/slog v1.0.0 h1:nZVnsoLpSGzOyiXdfhAtFrLlsJc24yW/Hnu5oRhZPls=

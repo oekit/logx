@@ -4,7 +4,7 @@
 > 当前版本：`v0.1.6` · module：`github.com/oekit/logx` · org：[oekit = Open Easy Kit](https://oekit.github.io)
 
 ## 本仓包含
-`./`、`hertzlog/`、`hlog/`、`internal/logxcallertest/`、`shutdown/`
+`./`、`hertzlog/`、`hlog/`、`kitexlog/`、`internal/logxcallertest/`、`shutdown/`
 
 ## 硬规则速览（全矩阵适用）
 
@@ -24,6 +24,9 @@
   **SDK/基础包必须 `logx.Delegating("组件名")` 懒解析**（禁止 Default()/WithService 声明包级 logger）
 - kv 结构化风格为默认；`Ctx*` 方法自动携带 trace_id；禁止 printf 风格 `logx.Infof` 作为主要手段
 - 后端经 `logx.SetDefault` 替换；`LOG_LEVEL` 环境变量统一生效
+- 桥接子包按需引入：`hlog`（Hertz hlog 后端）、`hertzlog`（logrus/zap/zerolog/slog→hlog）、
+  `kitexlog`（Kitex klog→logx，自 oekit/kitex 迁入；携带 cloudwego/kitex 依赖，根包仍零框架依赖）；
+  hlog 后端 Logger 禁止传入 `hertz.NewLogger`/`kitexlog.NewLogger`（无限递归，运行时 panic 防御）
 
 ### 并发安全
 - 禁止裸 `go func`：用 `github.com/oekit/concurrency/async` 的 GoSafe 系列（panic 被 recover）

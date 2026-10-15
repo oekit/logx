@@ -12,7 +12,7 @@
 //
 //	logx.SetDefault(logxhlog.NewHlogLogger("my-service"))
 //
-// 注意: 将 hlog 后端的 Logger 传入 hertz.NewLogger 或 kitex.NewLogger 会导致无限递归。
+// 注意: 将 hlog 后端的 Logger 传入 hertz.NewLogger 或 kitexlog.NewLogger 会导致无限递归。
 // 这些场景应使用 logx.NewSlogLogger 或 logx.NewStdLogger。
 package hlog
 
