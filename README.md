@@ -42,7 +42,7 @@ import "github.com/oekit/logx"
 var log = logx.WithService("my-service")
 
 log.Info("order created", "order_id", 42, "amount", 99.5)
-log.CtxError(ctx, "create failed", "err", err) // 自动带 trace_id
+log.CtxError(ctx, "create failed", "err", err) // 自动带 trace_id；error 值渲染为错误文本
 
 // main() 里可整体替换后端
 logx.SetDefault(logx.NewSlogLogger("my-service"))

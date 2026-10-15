@@ -104,13 +104,13 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 
 	// 持久化属性
 	for _, a := range l.Attrs {
-		record[a.Key] = a.Value
+		record[a.Key] = logValue(a.Value)
 	}
 
 	// 本次调用的 kv 对
 	for i := 0; i+1 < len(keysAndValues); i += 2 {
 		key := fmt.Sprintf("%v", keysAndValues[i])
-		record[key] = keysAndValues[i+1]
+		record[key] = logValue(keysAndValues[i+1])
 	}
 	if len(keysAndValues)%2 == 1 {
 		lastKey := fmt.Sprintf("%v", keysAndValues[len(keysAndValues)-1])
@@ -131,6 +131,17 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 	}
 	os.Stdout.Write(buf)
 	os.Stdout.Write([]byte{'\n'})
+}
+
+// logValue 规整 kv/Attr 值的可序列化形态：error 落 Error() 文本。encoding/json
+// 对多数 error 实现（fmt.wrapError、*errors.errorString、包装链等）无导出字段，
+// 会渲染成 "{}"，整条错误日志丢掉原因；与 log/slog JSONHandler 的 error 处理
+// 对齐（issue #2）。nil（未类型化）不经此路径，原样保留为 null。
+func logValue(v any) any {
+	if err, ok := v.(error); ok {
+		return err.Error()
+	}
+	return v
 }
 
 // callerSkipFiles 存放需跳过 caller 归属的源文件绝对路径（由 SkipCallerFiles 写入）。
