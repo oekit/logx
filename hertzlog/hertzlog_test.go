@@ -20,7 +20,7 @@ func TestLogrusLogger_RoutesToHlog(t *testing.T) {
 	// hlog.SetLogger(hertzcontriblogrus.NewLogger(...)) 是 hertz 的接法;
 	// 我们的 AsHlogLoggerFromLogrus 提供 ekit 风格的 1 行包装。
 	logger := hertzcontriblogrus.NewLogger(hertzcontriblogrus.WithLogger(l))
-	hlog.SetLogger(AsHlogLoggerFromLogrus(logger))
+	hlog.SetLogger(AsHlogLoggerLogrus(logger))
 	defer hlog.SetLogger(hlog.DefaultLogger())
 
 	hlog.Info("ekit-hertzlog-test")

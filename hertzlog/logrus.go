@@ -17,8 +17,3 @@ type LogrusOption = hertzcontriblogrus.Option
 func NewLogrusLogger(opts ...LogrusOption) *LogrusLogger {
 	return hertzcontriblogrus.NewLogger(opts...)
 }
-
-// AsHlogLoggerFromLogrus 适配 *LogrusLogger → hlog.FullLogger。
-func AsHlogLoggerFromLogrus(l *LogrusLogger) hlog.FullLogger {
-	return l
-}
