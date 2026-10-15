@@ -1,7 +1,6 @@
 package hertzlog
 
 import (
-	"github.com/cloudwego/hertz/pkg/common/hlog"
 	hertzcontribslog "github.com/hertz-contrib/logger/slog"
 )
 
