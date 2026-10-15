@@ -18,14 +18,13 @@
 //	)
 //
 //	ekitzap := hertzcontribzap.NewLogger(hertzcontribzap.WithLogger(zap.NewProduction()))
-//	hertzlog.SetLogger(ekitlogx.AsHlogLogger(ekitzap))
+//	hertzlog.SetLogger(ekitlogx.AsHlogLoggerZap(ekitzap))
 //
 // 设计:本子包只做 type alias 透传,业务可读 hertz-contrib 子包
 // 的 WithXxx Option,跟 hertz-contrib 同名 NewLogger 一致。
 package hertzlog
 
 import (
-	"github.com/cloudwego/hertz/pkg/common/hlog"
 	hertzcontribzap "github.com/hertz-contrib/logger/zap"
 )
 
