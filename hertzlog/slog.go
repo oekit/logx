@@ -18,8 +18,3 @@ type SlogOption = hertzcontribslog.Option
 func NewSlogLogger(opts ...SlogOption) *SlogLogger {
 	return hertzcontribslog.NewLogger(opts...)
 }
-
-// AsHlogLoggerFromSlog 适配 *SlogLogger → hlog.FullLogger。
-func AsHlogLoggerFromSlog(l *SlogLogger) hlog.FullLogger {
-	return l
-}

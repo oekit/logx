@@ -31,8 +31,3 @@ func NewZerologLogger(log zerolog.Logger, opts ...ZerologOpt) *ZerologLogger {
 func WithZerologOutput(w io.Writer) ZerologOpt {
 	return hertzcontribzerolog.WithOutput(w)
 }
-
-// AsHlogLoggerFromZerolog 适配 *ZerologLogger → hlog.FullLogger。
-func AsHlogLoggerFromZerolog(l *ZerologLogger) hlog.FullLogger {
-	return l
-}
