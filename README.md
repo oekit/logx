@@ -11,7 +11,7 @@
 ## 安装
 
 ```bash
-go get github.com/oekit/logx@v0.1.6
+go get github.com/oekit/logx@v0.1.9
 ```
 
 ## 能做什么
