@@ -62,7 +62,7 @@ var bad = logx.WithService("hardcoded")
 
 - kv 结构化风格是默认规范；`LOG_LEVEL` 环境变量统一控制所有后端
 - `MultiSink`/`FileSink`/`RotatingSink` 支持同时写 stdout + 轮转文件、自定义 Loki/OTLP 后端
-- 本仓零矩阵内依赖；hertzlog 子包的 hertz-contrib 桥接按需引入
+- 本仓零矩阵内依赖（hertz/hertz-contrib 全部隔离在桥接子模块中）；`hlog`/`hertzlog` 为嵌套 module（各自 go.mod），消费方按需 `go get github.com/oekit/logx/hlog`、`go get github.com/oekit/logx/hertzlog`
 
 
 ## 矩阵总览（23 活跃模块，自动生成）

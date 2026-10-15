@@ -14,8 +14,13 @@ import (
 	"testing"
 
 	"github.com/oekit/logx"
-	logxhlog "github.com/oekit/logx/hlog"
 )
+
+// hlogBackedStub 本地桩：仅实现 HlogBacked 标记接口（IsHlogLogger），
+// 替代对 hlog 嵌套子模块的直接依赖（hlog 已独立成 module，根包测试不拉 hertz）。
+type hlogBackedStub struct{ recLogger }
+
+func (s *hlogBackedStub) IsHlogLogger() {}
 
 // recLogger 记录型 fake：实现完整 logx.Logger 接口，记录 (level, msg) 与构建器调用。
 type recLogger struct {
@@ -178,7 +183,7 @@ func TestIsHlogBacked(t *testing.T) {
 	if logx.IsHlogBacked(&recLogger{}) {
 		t.Error("普通 logger 不应被识别为 hlog 后端")
 	}
-	if !logx.IsHlogBacked(logxhlog.NewHlogLogger("svc")) {
+	if !logx.IsHlogBacked(&hlogBackedStub{}) {
 		t.Error("hlog 后端应被 IsHlogBacked 识别")
 	}
 }

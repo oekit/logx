@@ -15,3 +15,9 @@ jobs:
     uses: oekit/.github/.github/workflows/go-ci.yml@main
     with:
       go-version: '1.24'
+      # 嵌套子模块（各自独立 go.mod）不在根模块 ./... 覆盖内，单独跑测试。
+      # hlog 依赖根模块 post-split pseudo-version（合并打 tag 后切正式版），
+      # 默认 GOPROXY 列表对 404 自动落 direct（公开仓匿名 https 可拉）。
+      additional-script: |
+        cd hlog && go test -race -count=1 ./...
+        cd ../hertzlog && go test -race -count=1 ./...
