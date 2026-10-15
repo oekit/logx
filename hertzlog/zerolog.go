@@ -3,7 +3,6 @@ package hertzlog
 import (
 	"io"
 
-	"github.com/cloudwego/hertz/pkg/common/hlog"
 	hertzcontribzerolog "github.com/hertz-contrib/logger/zerolog"
 	"github.com/rs/zerolog"
 )
