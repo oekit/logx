@@ -39,7 +39,8 @@
 //
 // bootstrap 包内部使用 shutdown.Manager 管理资源关闭：
 //
-//	bootstrap.Run(bootstrap.Config{...}, func(app *bootstrap.App) error {
+//	b, _ := bootstrap.New(bootstrap.WithServiceName("svc")) // + nacos/obs WithXxx 按需注入
+//	b.Run(func(app *bootstrap.App) error {
 //	    app.AddResource("hertz", func(ctx context.Context) error { return h.Shutdown(ctx) })
 //	    // ...
 //	})
