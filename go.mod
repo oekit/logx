@@ -10,6 +10,7 @@ require (
 	github.com/hertz-contrib/logger/zerolog v1.0.0
 	github.com/rs/zerolog v1.35.1
 	github.com/sirupsen/logrus v1.9.0
+	go.uber.org/zap v1.28.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
@@ -19,7 +20,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/arch v0.14.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
