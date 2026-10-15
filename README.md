@@ -14,16 +14,36 @@
 go get github.com/oekit/logx@v0.1.6
 ```
 
-## 快速使用
+## 能做什么
 
+- **接口分层**：CoreLogger→FormattedLogger→ContextLogger→Logger，按需依赖
+- **多后端**：std/slog 内置，hlog/hertzlog 桥接可替换（`SetDefault`）
+- **kv 结构化** + `Ctx*` 方法自动携带 trace_id
+- **Sink 抽象**：MultiSink 多目标、FileSink、RotatingSink 轮转，可自研接 Loki
+- **caller 归属**：自动跳过内部帧，桥接层可注册 SkipCallerFiles
+- 附 `shutdown` 优雅关停管理器（顺序 job、独立超时、失败隔离）
+
+## 使用示例
+
+### 业务服务
 ```go
 import "github.com/oekit/logx"
 
-var log = logx.WithService("my-service")
-log.Info("hello", "key", "value")
-log.CtxError(ctx, "failed", "err", err) // 自动携带 trace_id
+var log = logx.WithService("order-service")
+log.Info("order created", "order_id", 42, "amount", 99.5)
+log.CtxError(ctx, "pay failed", "err", err) // [trace=xxx] 自动注入
 ```
+### 多目标输出（stdout + 轮转文件）
+```go
+rot, _ := logx.NewRotatingSink("/var/log/app/app.log", 100) // 100MB
+logx.SetDefault(logx.NewSlogLogger("my-service"))
+```
+### SDK / 基础包（init 时序安全）
+```go
+var flowLog = logx.Delegating("workflow") // 调用时才解析 Default，消费方 SetDefault 跟随生效
 
+> ⚠️ **红线**：SDK 包声明包级 logger 禁止 `Default()`/`WithService`（init 时序失效），必须 `Delegating`；
+桥接框架日志（hertz/kitex NewLogger）传 `NewSlogLogger`/`NewStdLogger`，传 hlog 后端会无限递归。
 ## 包清单
 
 - 根包 \`logx\`（import \`github.com/oekit/logx\`）— Logger 接口分层（CoreLogger→Logger）、WithService/WithAttrs/WithGroup、Delegating 懒解析、MultiSink/FileSink/RotatingSink、LOG_LEVEL
