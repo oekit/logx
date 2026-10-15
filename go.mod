@@ -1,4 +1,4 @@
-module github.com/yi-nology/ekit-logx
+module github.com/openekit/logx
 
 go 1.26.0
 

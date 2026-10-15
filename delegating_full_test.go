@@ -13,8 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yi-nology/ekit-logx"
-	logxhlog "github.com/yi-nology/ekit-logx/hlog"
+	"github.com/openekit/logx"
+	logxhlog "github.com/openekit/logx/hlog"
 )
 
 // recLogger 记录型 fake：实现完整 logx.Logger 接口，记录 (level, msg) 与构建器调用。

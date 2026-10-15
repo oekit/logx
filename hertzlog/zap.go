@@ -14,7 +14,7 @@
 //	import (
 //	    hertzlog "github.com/cloudwego/hertz/pkg/common/hlog"
 //	    hertzcontribzap "github.com/hertz-contrib/logger/zap"
-//	    ekitlogx "github.com/yi-nology/ekit-logx/hertzlog"
+//	    ekitlogx "github.com/openekit/logx/hertzlog"
 //	)
 //
 //	ekitzap := hertzcontribzap.NewLogger(hertzcontribzap.WithLogger(zap.NewProduction()))

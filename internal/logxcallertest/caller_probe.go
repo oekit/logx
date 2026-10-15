@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/yi-nology/ekit-logx"
+	"github.com/openekit/logx"
 )
 
 // File 返回本文件路径，供测试注册为 caller 跳过项。

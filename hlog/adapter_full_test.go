@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
-	"github.com/yi-nology/ekit-logx"
+	"github.com/openekit/logx"
 )
 
 // TestHlogLogger_FullMethodMatrix 覆盖 logx.Logger 全接口 + 派生构建器 + 级别过滤。

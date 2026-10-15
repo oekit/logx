@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yi-nology/ekit-logx"
-	"github.com/yi-nology/ekit-logx/internal/logxcallertest"
+	"github.com/openekit/logx"
+	"github.com/openekit/logx/internal/logxcallertest"
 )
 
 func TestSkipCallerFiles_EndToEnd(t *testing.T) {

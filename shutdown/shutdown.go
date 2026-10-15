@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yi-nology/ekit-logx"
+	"github.com/openekit/logx"
 )
 
 var log = logx.Delegating("shutdown")
