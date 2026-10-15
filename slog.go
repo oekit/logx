@@ -199,8 +199,8 @@ func callerOutsideLogx() string {
 		// 根包、hlog/hertzlog 子包、以及内/外测试包。internal/ 下的测试
 		// 探针（logxcallertest）不属于实现，必须穿透。改 module 路径时
 		// 必须同步这里。
-		if i := strings.Index(fn.Name(), "openekit/logx"); i >= 0 {
-			rest := fn.Name()[i+len("openekit/logx"):]
+		if i := strings.Index(fn.Name(), "oekit/logx"); i >= 0 {
+			rest := fn.Name()[i+len("oekit/logx"):]
 			if rest == "" || rest[0] == '.' || rest[0] == '_' ||
 				strings.HasPrefix(rest, "/hlog") || strings.HasPrefix(rest, "/hertzlog") {
 				continue

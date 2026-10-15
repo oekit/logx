@@ -20,7 +20,7 @@
 //	logx.SetDefault(logx.NewStdLogger("my-service", logx.LevelDebug))
 //
 //	// 使用 hlog 后端（需导入子包）
-//	import logxhlog "github.com/openekit/logx/hlog"
+//	import logxhlog "github.com/oekit/logx/hlog"
 //	logx.SetDefault(logxhlog.NewHlogLogger("my-service"))
 //
 //	// 使用 slog 后端（推荐生产环境，输出结构化 JSON）

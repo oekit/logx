@@ -6,8 +6,8 @@
 // 用法:
 //
 //	import (
-//	    "github.com/openekit/logx"
-//	    logxhlog "github.com/openekit/logx/hlog"
+//	    "github.com/oekit/logx"
+//	    logxhlog "github.com/oekit/logx/hlog"
 //	)
 //
 //	logx.SetDefault(logxhlog.NewHlogLogger("my-service"))
@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
-	"github.com/openekit/logx"
+	"github.com/oekit/logx"
 )
 
 // hlogLogger 是基于 Hertz hlog 的 Logger 实现。
