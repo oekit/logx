@@ -10,7 +10,7 @@
 根门面（**仅依赖 stdlib + lumberjack，零框架依赖**）：
 
 ```bash
-go get github.com/oekit/logx@v0.2.0
+go get github.com/oekit/logx@ekit-logx
 ```
 
 ## 模块布局（1 根模块 + 3 嵌套模块）
