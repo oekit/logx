@@ -9,8 +9,14 @@ import (
 
 	"github.com/cloudwego/kitex/pkg/klog"
 	"github.com/oekit/logx"
-	logxhlog "github.com/oekit/logx/hlog"
 )
+
+// fakeHlog 是 hlog 后端的本地 fake：仅实现 logx.HlogBacked 标记接口。
+// 不跨模块 import logx/hlog——否则本模块 go.mod 会被迫 require hlog 嵌套模块，
+// hertz 依赖漏进 kitexlog 消费者的依赖图（kitexlog 只应带 kitex 依赖）。
+type fakeHlog struct{ logx.Logger }
+
+func (fakeHlog) IsHlogLogger() {}
 
 func TestNewLogger_ImplementsFullLogger(t *testing.T) {
 	logger := NewLogger(logx.NewSlogLogger("test"))
@@ -91,8 +97,8 @@ func TestNewLogger_PanicsOnHlogBacked(t *testing.T) {
 		}
 	}()
 
-	// hlog.NewHlogLogger returns hlog-backed Logger — must panic
-	NewLogger(logxhlog.NewHlogLogger("test-hlog"))
+	// fakeHlog 仅实现 HlogBacked 标记 — must panic
+	NewLogger(fakeHlog{})
 }
 
 // TestNewLogger_CallerAttribution 验证适配器帧不再被归属为 caller：

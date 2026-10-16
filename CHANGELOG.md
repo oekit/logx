@@ -10,8 +10,17 @@
   实现与测试逐行搬移、行为不变（含 hlog 后端递归 panic 守卫与 caller-skip 自注册）。
   只需要日志桥接的用户不再被迫 import 重型 kitex 模块；oekit/kitex 侧保留
   `kitex.NewLogger` Deprecated 别名委托，零 breaking
-- **build**：模块新增 `github.com/cloudwego/kitex v0.16.4` 直接依赖（仅 `kitexlog`
-  子包使用，根包仍零框架依赖）；go.mod 顺带清理一条失效 indirect（golang.org/x/arch）
+- **refactor**：本仓改为**嵌套多模块**布局——`hlog`/`hertzlog`/`kitexlog` 三个桥接
+  子包各自持有独立 go.mod（module `github.com/oekit/logx/hlog` / `.../hertzlog` /
+  `.../kitexlog`，同仓不同模块，先例 oekit/bootstrap 的 `nacos/`、`obs/`）。
+  **import 路径不变，无代码级 breaking**；变的是模块图：Go 的依赖图是模块级的，
+  此前根模块 go.mod require 的 hertz/kitex/zap/zerolog/logrus 会进所有消费者的
+  依赖图，拆分后按需解析——只 import 根门面的消费者不再被拉入任何框架依赖。
+  嵌套模块 tag 约定：`hlog/v0.1.0`、`hertzlog/v0.1.0`、`kitexlog/v0.1.0`
+- **build**：根模块移除 `github.com/cloudwego/{hertz,kitex}`、`github.com/hertz-contrib/logger/{logrus,slog,zap,zerolog}`、
+  `github.com/sirupsen/logrus`、`go.uber.org/zap`、`github.com/rs/zerolog`（各自移入对应
+  嵌套模块，版本不变）；保留 lumberjack（RotatingSink 是门面功能），根门面自此仅
+  stdlib + lumberjack
 
 ## [v0.1.10] — 2026-10-16
 

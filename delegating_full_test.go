@@ -14,8 +14,15 @@ import (
 	"testing"
 
 	"github.com/oekit/logx"
-	logxhlog "github.com/oekit/logx/hlog"
 )
+
+// fakeHlog 是 hlog 后端的本地 fake：仅实现 HlogBacked 标记接口。
+// 不 import 嵌套模块 logx/hlog——否则根模块 go.mod 会被迫 require 嵌套模块，
+// hertz 依赖漏进所有消费者的依赖图，破坏「门面零框架依赖」目标
+// （IsHlogBacked 检查的是标记接口，语义与真实 hlog 后端一致）。
+type fakeHlog struct{ logx.Logger }
+
+func (fakeHlog) IsHlogLogger() {}
 
 // recLogger 记录型 fake：实现完整 logx.Logger 接口，记录 (level, msg) 与构建器调用。
 type recLogger struct {
@@ -178,8 +185,8 @@ func TestIsHlogBacked(t *testing.T) {
 	if logx.IsHlogBacked(&recLogger{}) {
 		t.Error("普通 logger 不应被识别为 hlog 后端")
 	}
-	if !logx.IsHlogBacked(logxhlog.NewHlogLogger("svc")) {
-		t.Error("hlog 后端应被 IsHlogBacked 识别")
+	if !logx.IsHlogBacked(fakeHlog{}) {
+		t.Error("实现 HlogBacked 标记的 logger 应被 IsHlogBacked 识别")
 	}
 }
 
