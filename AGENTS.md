@@ -1,7 +1,7 @@
 # AGENTS.md — oekit/logx
 
 > 统一日志门面（接口分层 / 多后端 / Sink / caller 归属）+ shutdown 优雅关停
-> 当前版本：`ekit-logx` · module：`github.com/oekit/logx` · org：[oekit = Open Easy Kit](https://oekit.github.io)
+> 当前版本：`v0.2.0` · module：`github.com/oekit/logx` · org：[oekit = Open Easy Kit](https://oekit.github.io)
 
 ## 本仓包含（嵌套多模块：1 根模块 + 3 嵌套模块）
 - `./` —— 根模块 `github.com/oekit/logx`（门面 + std/slog 后端 + Sink + shutdown + internal/logxcallertest）
