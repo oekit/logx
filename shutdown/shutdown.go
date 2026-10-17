@@ -3,6 +3,7 @@ package shutdown
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"sync"
@@ -14,6 +15,29 @@ import (
 
 var log = logx.Delegating("shutdown")
 
+// logSink 是 Manager 内部日志出口的最小接口：*slog.Logger 与 logx.Logger
+// 的方法签名兼容（`...any` 键值对），二者均可直接作为实现。
+type logSink interface {
+	Info(msg string, keysAndValues ...any)
+	Warn(msg string, keysAndValues ...any)
+	Error(msg string, keysAndValues ...any)
+}
+
+// ManagerOption 配置 Manager 的函数选项。
+type ManagerOption func(*Manager)
+
+// WithLogger 注入宿主 slog.Logger：Manager 内部日志（含 job 名等结构化字段）
+// 写入该 logger，便于与宿主日志体系统一采集、告警。
+// 未注入时保持默认行为（logx 默认 sink，component=shutdown）。
+// 传入 nil 等同未注入。
+func WithLogger(l *slog.Logger) ManagerOption {
+	return func(m *Manager) {
+		if l != nil {
+			m.logger = l
+		}
+	}
+}
+
 // Manager 管理优雅关闭的资源。
 type Manager struct {
 	jobs         []job
@@ -24,6 +48,7 @@ type Manager struct {
 	teardowns    []func()
 	shutdownErrs []error
 	shutdownDone atomic.Bool
+	logger       logSink
 
 	// 引用计数和请求阻断
 	refCount  atomic.Int64
@@ -41,11 +66,16 @@ type job struct {
 }
 
 // New 创建一个关闭管理器。defaultTimeout 是默认的单个资源关闭超时。
-func New(defaultTimeout time.Duration) *Manager {
+// 可选 WithLogger 注入宿主日志；不传则使用 logx 默认 sink。
+func New(defaultTimeout time.Duration, opts ...ManagerOption) *Manager {
 	m := &Manager{
 		timeout: defaultTimeout,
+		logger:  log,
 	}
 	m.accepting.Store(true)
+	for _, opt := range opts {
+		opt(m)
+	}
 	return m
 }
 
@@ -111,7 +141,7 @@ func (m *Manager) Listen(signals ...os.Signal) {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, signals...)
 	sig := <-ch
-	log.Info("received signal", "signal", sig)
+	m.logger.Info("received signal", "signal", sig)
 	m.Shutdown(context.Background())
 }
 
@@ -128,7 +158,7 @@ func (m *Manager) Shutdown(ctx context.Context) {
 		m.acqMu.Lock()
 		m.accepting.Store(false)
 		m.acqMu.Unlock()
-		log.Info("stopped accepting new requests")
+		m.logger.Info("stopped accepting new requests")
 
 		// 2. 先执行 teardowns
 		m.mu.Lock()
@@ -143,7 +173,7 @@ func (m *Manager) Shutdown(ctx context.Context) {
 				m.mu.Lock()
 				m.shutdownErrs = append(m.shutdownErrs, err)
 				m.mu.Unlock()
-				log.Error("teardown failed", "err", err)
+				m.logger.Error("teardown failed", "err", err)
 			}
 		}
 
@@ -153,14 +183,14 @@ func (m *Manager) Shutdown(ctx context.Context) {
 				m.mu.Lock()
 				m.shutdownErrs = append(m.shutdownErrs, fmt.Errorf("%s: %w", j.name, err))
 				m.mu.Unlock()
-				log.Error("resource close failed", "resource", j.name, "err", err)
+				m.logger.Error("resource close failed", "resource", j.name, "err", err)
 			} else {
-				log.Info("resource closed", "resource", j.name)
+				m.logger.Info("resource closed", "resource", j.name)
 			}
 		}
 
 		m.shutdownDone.Store(true)
-		log.Info("shutdown completed")
+		m.logger.Info("shutdown completed")
 	})
 }
 
@@ -236,18 +266,18 @@ func (m *Manager) waitForRequests(ctx context.Context) {
 	for {
 		refCount := m.refCount.Load()
 		if refCount <= 0 {
-			log.Info("all requests completed")
+			m.logger.Info("all requests completed")
 			return
 		}
 
 		if !deadline.IsZero() && time.Now().After(deadline) {
-			log.Warn("timeout waiting for requests", "pending", refCount)
+			m.logger.Warn("timeout waiting for requests", "pending", refCount)
 			return
 		}
 
 		select {
 		case <-ctx.Done():
-			log.Warn("context cancelled, requests still pending", "pending", refCount)
+			m.logger.Warn("context cancelled, requests still pending", "pending", refCount)
 			return
 		case <-ticker.C:
 			// 继续等待
@@ -255,8 +285,10 @@ func (m *Manager) waitForRequests(ctx context.Context) {
 	}
 }
 
-// Errors 返回 Shutdown 过程中收集的错误。
+// Errors 返回 Shutdown 过程中收集的错误：teardown 失败（含 panic）与
+// closer job 失败（返回 error 或 panic），按发生顺序排列。
 // 不会触发 Shutdown；如需触发请显式调用 Shutdown。
+// 返回的是副本，调用方修改不影响内部状态。
 func (m *Manager) Errors() []error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

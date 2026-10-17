@@ -3,6 +3,17 @@
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
 
+## [Unreleased]
+
+- **feat(shutdown)**：`WithLogger(l *slog.Logger) ManagerOption` 注入宿主日志——
+  Manager 内部日志（含 job 名等结构化字段）写入宿主 slog.Logger，与宿主日志体系
+  统一采集；不注入时保持默认 logx sink（component=shutdown）不变
+  （[#5](https://github.com/oekit/logx/issues/5)）
+- **feat(shutdown)**：`(*Manager).Errors()` 访问器——Shutdown 结束后读取
+  teardown/closer 失败（含 panic 隔离出的错误），停机错误可事后观测上报；
+  返回副本、不触发 Shutdown
+  （[#5](https://github.com/oekit/logx/issues/5)）
+
 ## [v0.2.0] — 2026-10-16
 
 - **feat**：新增 `kitexlog` 子包——Kitex klog→logx 桥接（`kitexlog.NewLogger`），
