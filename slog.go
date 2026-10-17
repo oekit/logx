@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -24,22 +25,57 @@ import (
 //
 //	// 或在初始化时一次性切换
 //	logx.UseSlog("my-service")
+//
+//	// 注入消费方自有 slog.Handler，保留既有日志格式
+//	logx.SetDefault(logx.NewSlogLogger("my-service", logx.WithHandler(myHandler)))
 type slogLogger struct {
 	BaseLogger
 	group string
+	// handler 非 nil 时走消费方注入的 slog.Handler，由其负责格式与输出；
+	// nil 时走内置 JSON→stdout 路径。构造后不可变，clone 时原样携带。
+	handler slog.Handler
+}
+
+// SlogOption 是 NewSlogLogger 的函数选项。
+type SlogOption func(*slogLogger)
+
+// WithHandler 注入消费方自有的 slog.Handler，日志格式与输出目标完全由该 Handler
+// 决定（TextHandler / 文件轮转 / fan-out 等）。logx 侧仍负责级别过滤（见
+// BaseLogger.Level）与 service / trace_id / Attr / kv 等结构化字段注入。
+//
+// 未注入时保持默认行为：内置 JSON 序列化输出到 stdout。
+func WithHandler(h slog.Handler) SlogOption {
+	return func(l *slogLogger) { l.handler = h }
+}
+
+// WithLevel 显式指定日志级别，优先级高于 LOG_LEVEL 环境变量。
+// 构造后仍可 SetLevel 运行期调级。
+func WithLevel(level Level) SlogOption {
+	return func(l *slogLogger) { l.Level = level }
 }
 
 // NewSlogLogger 创建基于 log/slog 的结构化 Logger。
 // service 会作为 "service" 字段输出到每条日志。
-// 默认级别为 LevelInfo，输出 JSON 到 stdout。
-func NewSlogLogger(service string) Logger {
-	return &slogLogger{BaseLogger: BaseLogger{Service: service, Level: LevelInfo}}
+//
+// 级别优先级：WithLevel 显式参数 > LOG_LEVEL 环境变量 > 默认 LevelInfo。
+// 未注入 WithHandler 时输出 JSON 到 stdout；注入后由该 Handler 决定格式。
+func NewSlogLogger(service string, opts ...SlogOption) Logger {
+	l := &slogLogger{BaseLogger: BaseLogger{Service: service, Level: LevelInfo}}
+	if lvl := ParseLogLevel(os.Getenv("LOG_LEVEL")); lvl != nil {
+		l.Level = *lvl
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(l)
+		}
+	}
+	return l
 }
 
 // UseSlog 是便捷函数：创建 slogLogger 并设为全局默认。
 // service 为服务名（输出为 service 字段）。
-func UseSlog(service string) {
-	SetDefault(NewSlogLogger(service))
+func UseSlog(service string, opts ...SlogOption) {
+	SetDefault(NewSlogLogger(service, opts...))
 }
 
 func (l *slogLogger) clone() *slogLogger {
@@ -51,7 +87,8 @@ func (l *slogLogger) clone() *slogLogger {
 			Attrs:   append([]Attr(nil), cp.Attrs...),
 			Ctx:     cp.Ctx,
 		},
-		group: l.group,
+		group:   l.group,
+		handler: l.handler,
 	}
 }
 
@@ -79,9 +116,15 @@ func (l *slogLogger) WithGroup(name string) Logger {
 	return c
 }
 
-// emit 是所有日志方法的统一入口，输出一行结构化 JSON。
+// emit 是所有日志方法的统一入口。注入了 WithHandler 时交给该 Handler 输出；
+// 否则输出一行结构化 JSON 到 stdout。
 func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndValues ...any) {
 	if !l.ShouldLog(level) {
+		return
+	}
+
+	if l.handler != nil {
+		l.emitToHandler(ctx, level, msg, keysAndValues...)
 		return
 	}
 
@@ -131,6 +174,55 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 	}
 	os.Stdout.Write(buf)
 	os.Stdout.Write([]byte{'\n'})
+}
+
+// emitToHandler 将日志经消费方注入的 slog.Handler 输出。字段口径与内置 JSON
+// 路径一致（service / trace_id / caller / Attr / kv），格式完全由 Handler 决定。
+func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string, keysAndValues ...any) {
+	pc, caller := realCallerOutsideLogx()
+	attrs := make([]slog.Attr, 0, 4+len(l.Attrs)+len(keysAndValues)/2+1)
+	if l.Service != "" {
+		attrs = append(attrs, slog.String("service", l.Service))
+	}
+	if traceID := ExtractTrace(ctx); traceID != "" {
+		attrs = append(attrs, slog.String("trace_id", traceID))
+	}
+	if caller != "" {
+		attrs = append(attrs, slog.String("caller", caller))
+	}
+	for _, a := range l.Attrs {
+		attrs = append(attrs, slog.Any(a.Key, logValue(a.Value)))
+	}
+	for i := 0; i+1 < len(keysAndValues); i += 2 {
+		key := fmt.Sprintf("%v", keysAndValues[i])
+		attrs = append(attrs, slog.Any(key, logValue(keysAndValues[i+1])))
+	}
+	if len(keysAndValues)%2 == 1 {
+		lastKey := fmt.Sprintf("%v", keysAndValues[len(keysAndValues)-1])
+		attrs = append(attrs, slog.Any(lastKey, "(MISSING)"))
+	}
+
+	h := l.handler
+	if l.group != "" {
+		h = h.WithGroup(l.group)
+	}
+	rec := slog.NewRecord(time.Now(), slogLevel(level), msg, pc)
+	rec.AddAttrs(attrs...)
+	_ = h.Handle(ctx, rec)
+}
+
+// slogLevel 将 logx.Level 映射为 log/slog.Level。
+func slogLevel(level Level) slog.Level {
+	switch level {
+	case LevelDebug:
+		return slog.LevelDebug
+	case LevelWarn:
+		return slog.LevelWarn
+	case LevelError:
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 // logValue 规整 kv/Attr 值的可序列化形态：error 落 Error() 文本。encoding/json
@@ -196,6 +288,14 @@ func mergeSkipFiles(old *[]string, add []string) *[]string {
 // logx.Info vs Delegating 包装），全局缓存会让先到的路径污染后到的，
 // 把 caller 错误归属到无关文件。探测循环上限 12 帧，成本可忽略。
 func callerOutsideLogx() string {
+	_, caller := realCallerOutsideLogx()
+	return caller
+}
+
+// realCallerOutsideLogx 返回真实调用方的 PC 与 "file:line"。
+// PC 供 slog.Record 使用（Handler 的 AddSource 依赖它），字符串供 JSON 路径的
+// caller 字段使用。判定规则同 callerOutsideLogx。
+func realCallerOutsideLogx() (uintptr, string) {
 	skipFiles := callerSkipFiles.Load()
 	for skip := 2; skip < 12; skip++ {
 		pc, file, line, ok := runtime.Caller(skip)
@@ -220,9 +320,9 @@ func callerOutsideLogx() string {
 		if isSkipFile(skipFiles, file) {
 			continue
 		}
-		return fmt.Sprintf("%s:%d", filepath.Base(file), line)
+		return pc, fmt.Sprintf("%s:%d", filepath.Base(file), line)
 	}
-	return ""
+	return 0, ""
 }
 
 func isSkipFile(skipFiles *[]string, file string) bool {

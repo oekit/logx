@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+- **feat(slog)**：`NewSlogLogger` 支持 `SlogOption` 注入消费方自有的 `slog.Handler`
+  （`WithHandler`），保留既有日志格式（TextHandler / 文件轮转 / fan-out 等），
+  「日志格式归消费方、门面归 logx」成立；未注入时仍走内置 JSON→stdout，纯增量。
+  另提供 `WithLevel` 显式指定级别；级别优先级：`WithLevel` > `LOG_LEVEL` 环境变量 >
+  默认 `LevelInfo`（`NewSlogLogger` 现按此口径生效，原先忽略 `LOG_LEVEL`）
+  （[#6](https://github.com/oekit/logx/issues/6)）
 - **feat(shutdown)**：`WithLogger(l *slog.Logger) ManagerOption` 注入宿主日志——
   Manager 内部日志（含 job 名等结构化字段）写入宿主 slog.Logger，与宿主日志体系
   统一采集；不注入时保持默认 logx sink（component=shutdown）不变

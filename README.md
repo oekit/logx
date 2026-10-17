@@ -67,6 +67,9 @@ log.CtxError(ctx, "create failed", "err", err) // 自动带 trace_id；error 值
 
 // main() 里可整体替换后端
 logx.SetDefault(logx.NewSlogLogger("my-service"))
+
+// 存量 slog 服务：注入自定义 Handler，保留既有日志格式
+// logx.SetDefault(logx.NewSlogLogger("my-service", logx.WithHandler(myHandler)))
 ```
 
 ### SDK 包的硬规则
