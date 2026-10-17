@@ -62,6 +62,31 @@ type Logger interface {
 	LoggerBuilder
 }
 
+// LevelEnabler 由支持级别判定的实现提供（LevelEnabler 接口）。
+// 嵌入 BaseLogger 的后端（std/slog/hlog 等）自动实现；Delegating 包装器透传到
+// 当前解析目标。消费方经类型断言可选使用——与生态「可选能力接口 + 类型断言」
+// 哲学一致，不改动 CoreLogger 最小接口。
+type LevelEnabler interface {
+	Enabled(level Level) bool
+}
+
+// Enabled 判定 logger 是否会输出 level 级别日志。
+// 优先走 logger 的 LevelEnabler；未实现时保守返回 true（与历史行为一致，绝不误吞日志）。
+//
+// 热路径守卫：在昂贵参数求值（大对象截断/序列化/拷贝）之前先判定，
+// 被级别过滤掉的事件零成本跳过：
+//
+//	if !logx.Enabled(l, logx.LevelDebug) {
+//	    return // 跳过 truncateForLog(body) 等昂贵求值
+//	}
+//	l.Debug("transport response body", "body", truncateForLog(body, 2048))
+func Enabled(logger Logger, level Level) bool {
+	if le, ok := logger.(LevelEnabler); ok {
+		return le.Enabled(level)
+	}
+	return true
+}
+
 // Attr 是结构化日志的单个属性（键值对）。
 type Attr struct {
 	Key   string

@@ -70,6 +70,12 @@ func (b *BaseLogger) ShouldLog(level Level) bool {
 	return level >= b.Level
 }
 
+// Enabled 判定给定级别当前是否会被输出——LevelEnabler 接口的 BaseLogger 实现。
+// 嵌入 BaseLogger 的后端（std/slog/hlog 等）自动获得该方法。
+func (b *BaseLogger) Enabled(level Level) bool {
+	return b.ShouldLog(level)
+}
+
 // SetLevel 设置该 logger 实例的日志级别。
 func (b *BaseLogger) SetLevel(level Level) {
 	b.Mu.Lock()

@@ -34,6 +34,15 @@ type delegatingLogger struct {
 	resolve func() Logger
 }
 
+// Enabled 判定当前解析目标是否输出该级别——LevelEnabler 透传。
+// 目标未实现 LevelEnabler 时保守返回 true。
+func (d delegatingLogger) Enabled(level Level) bool {
+	if le, ok := d.resolve().(LevelEnabler); ok {
+		return le.Enabled(level)
+	}
+	return true
+}
+
 // 结构化风格方法
 
 func (d delegatingLogger) Debug(msg string, keysAndValues ...any) {

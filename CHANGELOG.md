@@ -3,7 +3,19 @@
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
 
-## [Unreleased]
+## [v0.5.0] — 2026-10-17
+
+- **feat(logger)**：新增 `LevelEnabler` 可选接口（`Enabled(level Level) bool`）+
+  惯用 helper `logx.Enabled(logger, level)`——热路径在昂贵 kv 参数求值前提前
+  判定级别，被过滤事件零成本跳过（[#9](https://github.com/oekit/logx/issues/9)）。
+  `std`/`slog` 后端经 BaseLogger 自动实现，`Delegating` 包装器透传解析目标，
+  未实现的实现方保守返回 true（不误吞日志）。不动 `CoreLogger` 最小接口
+- docs: CHANGELOG 的 Unreleased 节对齐已发布的 v0.4.0 tag
+- **说明**：shutdown 兼容别名原计划本版本删除，因 bootstrap/hertz/kitex 等
+  消费方尚未完成向 `core/lifecycle` 的迁移，**顺延至 v0.6.0**——先迁消费方，
+  再删别名（保留别名方向无破坏）
+
+## [v0.4.0] — 2026-10-17
 
 - **refactor(shutdown)**：`Manager` 原语迁至 [oekit/core](https://github.com/oekit/core)
   `lifecycle` 包（与 `lifecycle.App` 契约同域，lifecycle 零外部依赖）。
