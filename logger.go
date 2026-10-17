@@ -99,31 +99,36 @@ var defaultLoggerV atomic.Pointer[Logger]
 func init() {
 	l := NewStdLogger("default")
 	// 读取 LOG_LEVEL 环境变量，修复之前只设 hlog 级别的 split-brain
-	if lvl := ParseLogLevel(os.Getenv("LOG_LEVEL")); lvl != nil {
-		l.SetLevel(*lvl)
-	}
+	l.SetLevel(ParseLogLevelOr(os.Getenv("LOG_LEVEL"), LevelInfo))
 	defaultLoggerV.Store(&l)
 }
 
-// ParseLogLevel 解析 LOG_LEVEL 环境变量值为 Level 指针。
-// 未识别的值返回 nil。
-func ParseLogLevel(s string) *Level {
+// ParseLogLevel 解析级别字符串（DEBUG/INFO/WARN/ERROR，大小写不敏感）。
+// 未识别的值返回错误（#13：不再返回 *Level 指针——调用方漏判空会在
+// LOG_LEVEL 配错时得到远端解引用 panic）。空串按错误处理（区分「没配」），
+// 「配错就退回默认」的场景用 ParseLogLevelOr。
+func ParseLogLevel(s string) (Level, error) {
 	switch strings.ToUpper(s) {
 	case "DEBUG":
-		l := LevelDebug
-		return &l
+		return LevelDebug, nil
 	case "INFO":
-		l := LevelInfo
-		return &l
+		return LevelInfo, nil
 	case "WARN":
-		l := LevelWarn
-		return &l
+		return LevelWarn, nil
 	case "ERROR":
-		l := LevelError
-		return &l
+		return LevelError, nil
 	default:
-		return nil
+		return LevelInfo, fmt.Errorf("logx: unknown level %q", s)
 	}
+}
+
+// ParseLogLevelOr 解析级别字符串，未识别（含空串）时退回 def——
+// 「LOG_LEVEL 配错就退回默认」这一绝大多数场景的免判空形态。
+func ParseLogLevelOr(s string, def Level) Level {
+	if lvl, err := ParseLogLevel(s); err == nil {
+		return lvl
+	}
+	return def
 }
 
 // traceExtractor 是从 context 提取 trace_id 的可注入函数。

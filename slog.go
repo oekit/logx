@@ -61,9 +61,7 @@ func WithLevel(level Level) SlogOption {
 // 未注入 WithHandler 时输出 JSON 到 stdout；注入后由该 Handler 决定格式。
 func NewSlogLogger(service string, opts ...SlogOption) Logger {
 	l := &slogLogger{BaseLogger: BaseLogger{Service: service, Level: LevelInfo}}
-	if lvl := ParseLogLevel(os.Getenv("LOG_LEVEL")); lvl != nil {
-		l.Level = *lvl
-	}
+	l.Level = ParseLogLevelOr(os.Getenv("LOG_LEVEL"), LevelInfo)
 	for _, opt := range opts {
 		if opt != nil {
 			opt(l)

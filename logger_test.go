@@ -334,3 +334,26 @@ func TestWithCtx_PackageLevel(t *testing.T) {
 		t.Errorf("package-level WithCtx did not bind ctx")
 	}
 }
+
+// TestParseLogLevel_Forms 钉住 #13：A 形态 (Level, error) 区分「没配」与「配错」，
+// B 形态 ParseLogLevelOr 配错退默认。
+func TestParseLogLevel_Forms(t *testing.T) {
+	if lvl, err := ParseLogLevel("debug"); err != nil || lvl != LevelDebug {
+		t.Fatalf("debug: %v %v", lvl, err)
+	}
+	if lvl, err := ParseLogLevel("WARN"); err != nil || lvl != LevelWarn {
+		t.Fatalf("WARN 大小写不敏感: %v %v", lvl, err)
+	}
+	if _, err := ParseLogLevel(""); err == nil {
+		t.Fatal("空串应报错（区分没配）")
+	}
+	if _, err := ParseLogLevel("verbose"); err == nil {
+		t.Fatal("未知级别应报错")
+	}
+	if got := ParseLogLevelOr("verbose", LevelInfo); got != LevelInfo {
+		t.Fatalf("Or fallback = %v", got)
+	}
+	if got := ParseLogLevelOr("ERROR", LevelInfo); got != LevelError {
+		t.Fatalf("Or parsed = %v", got)
+	}
+}

@@ -2,6 +2,19 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.7.0] — 2026-10-18
+
+### Breaking
+- `ParseLogLevel` 签名改为 `(Level, error)`（#13：原 `*Level` 失败为 nil，漏判空会在
+  LOG_LEVEL 配错时远端解引用 panic）；新增 `ParseLogLevelOr(s, def)`——「配错退默认」
+  免判空形态。矩阵内无外部消费方（已核对），BREAKING 影响面为矩阵外
+
+### Added
+- `TraceHandler(inner slog.Handler, opts ...TraceHandlerOption)`（#12）：给任意
+  slog.Handler 包一层自动注入 trace_id——裸 slog 项目接 trace 串联的唯一路子。
+  边界：ctx 无 trace 不注入（后台日志保持原样）、已显式携带不重复注入、
+  WithAttrs/WithGroup 返回包装后的 handler（派生不断链）；`WithTraceKey` 自定义键名。
+  trace 来源仍走 SetTraceExtractor 注册的提取器，与 logx/hmw/hertzotel 一致
 ## [v0.6.0] — 2026-10-17
 
 ### Added（go-kratos 对齐）
