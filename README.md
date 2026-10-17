@@ -7,7 +7,7 @@
 
 ## 安装
 
-根门面（**仅依赖 stdlib + lumberjack，零框架依赖**）：
+根门面（**纯 stdlib，零外部依赖**）：
 
 ```bash
 go get github.com/oekit/logx@v0.3.0
@@ -23,7 +23,8 @@ hertz/kitex/zap/zerolog/logrus 会进所有消费者的依赖图；拆分后只 
 
 | go.mod 路径 | module | 职责 | 框架依赖 | 安装 |
 |---|---|---|---|---|
-| `./` | `github.com/oekit/logx` | 统一门面 + std/slog 后端 + Sink + shutdown | 仅 lumberjack | `go get github.com/oekit/logx@v0.3.0` |
+| `./` | `github.com/oekit/logx` | 统一门面 + std/slog 后端 + shutdown | 无 | `go get github.com/oekit/logx@v0.3.0` |
+| `./sink/` | `github.com/oekit/logx/sink` | Sink/FileSink/RotatingSink/MultiSink 多目标输出 | lumberjack | `go get github.com/oekit/logx/sink@v0.1.0` |
 | `./hlog/` | `github.com/oekit/logx/hlog` | Hertz hlog 后端适配 | cloudwego/hertz | `go get github.com/oekit/logx/hlog@v0.1.0` |
 | `./hertzlog/` | `github.com/oekit/logx/hertzlog` | hertz-contrib logrus/zap/zerolog/slog 桥接 | hertz + hertz-contrib/logger/* + logrus/zap/zerolog | `go get github.com/oekit/logx/hertzlog@v0.1.0` |
 | `./kitexlog/` | `github.com/oekit/logx/kitexlog` | Kitex klog→logx 桥接（自 oekit/kitex 迁入） | cloudwego/kitex | `go get github.com/oekit/logx/kitexlog@v0.1.0` |
@@ -47,7 +48,8 @@ logrus/zap/zerolog）可整体替换。附带优雅关停管理器 `shutdown`。
 
 | 包 | 做什么 |
 |---|---|
-| 根包 | 接口 + std/slog 两内置后端 + `MultiSink`/`FileSink`/`RotatingSink` 多目标输出 |
+| 根包 | 接口 + std/slog 两内置后端 |
+| `sink` | `Sink`/`MultiSink`/`FileSink`/`RotatingSink` 多目标输出 |
 | `hlog` | Hertz hlog 后端适配 |
 | `hertzlog` | hertz-contrib 的 logrus/zap/zerolog/slog 桥接 |
 | `kitexlog` | Kitex klog→logx 桥接（自 oekit/kitex 迁入；携带 cloudwego/kitex 依赖，按需引入） |
@@ -85,8 +87,8 @@ var bad = logx.WithService("hardcoded")
 ## 要点
 
 - kv 结构化风格是默认规范；`LOG_LEVEL` 环境变量统一控制所有后端
-- `MultiSink`/`FileSink`/`RotatingSink` 支持同时写 stdout + 轮转文件、自定义 Loki/OTLP 后端
-- 根门面仅 stdlib+lumberjack；`hlog`/`hertzlog`/`kitexlog` 各自为嵌套模块（见「模块布局」），框架依赖按需引入
+- `logx/sink` 的 `MultiSink`/`FileSink`/`RotatingSink` 支持同时写 stdout + 轮转文件、自定义 Loki/OTLP 后端
+- 根门面纯 stdlib；`sink`/`hlog`/`hertzlog`/`kitexlog` 各自为嵌套模块（见「模块布局」），lumberjack/框架依赖按需引入
 
 
 ## 矩阵总览（21 活跃模块，自动生成）
@@ -95,7 +97,7 @@ var bad = logx.WithService("hardcoded")
 |---|---|---|
 | [pkg](https://github.com/oekit/pkg) | 微工具集 21 合 1（errors/bloomx/contextx/collectionx/validator/stringx/slicex/enumx/convert/encoding/jsonrepair/httpjson/mathx/pathx/pagination/ptrx/timex/uidgen/cache/bufiox/strmap）；cache（v0.4.0 起）含缓存接口 CacheAside + BatchGetter 批量能力（MGet）+ LocalCache/SingleFlightCache + cachetest 契约 + Checker；collectionx（v0.5.0 起）泛型容器 Set/Ring/Queue/SafeMap；timex/stringx（v0.7.0 起）时间段边界 BeginningOf/EndOf 七对（分/时/日/周/月/季/年，周起始显式参数）+ trie 多模式替换器 Replacer（最长匹配）/ NewMask 敏感词遮罩 | — |
 | [concurrency](https://github.com/oekit/concurrency) | 并发与流控原语（async/gopool/group/singleflight/progress/syncx/ratelimit/retry）+ window 滑动窗口 / breaker 自适应熔断（规范哨兵 ErrCircuitOpen）/ shedding CPU 自适应降载 / batch 攒批执行器（满条数/满字节/窗口去重）/ timewheel 单级时间轮 | — |
-| [logx](https://github.com/oekit/logx) | 统一日志门面（多后端可替换 + Sink + caller 归属）+ 优雅关停；桥接子包 hlog/hertzlog/kitexlog 为嵌套模块按需引入 | — |
+| [logx](https://github.com/oekit/logx) | 统一日志门面（多后端可替换 + caller 归属）+ 优雅关停；sink/hlog/hertzlog/kitexlog 为嵌套模块按需引入 | — |
 | [core](https://github.com/oekit/core) | 应用基建件（governance 治理 schema / config 配置加载 + default/env/range/options tag 校验 / lifecycle 契约 / network IP 工具 / version） | [logx](https://github.com/oekit/logx) |
 | [metrics](https://github.com/oekit/metrics) | Prometheus 门面 + 弹性指标族 | [core](https://github.com/oekit/core) |
 | [tracing](https://github.com/oekit/tracing) | OpenTelemetry 追踪 + trace_id 真相源 | [logx](https://github.com/oekit/logx) |

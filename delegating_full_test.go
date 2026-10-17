@@ -4,11 +4,8 @@ package logx_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -141,7 +138,7 @@ func TestDelegating_NoComponent_UsesDefaultDirectly(t *testing.T) {
 	rec := &recLogger{}
 	setDefaultRestore(t, rec)
 
-	logx.Delegating().Error("no-comp")
+	logx.Delegating("").Error("no-comp")
 	if got := rec.snapshot(); len(got) != 1 || got[0] != "ERROR:no-comp" {
 		t.Fatalf("entries = %v, want [ERROR:no-comp]", got)
 	}
@@ -187,89 +184,6 @@ func TestIsHlogBacked(t *testing.T) {
 	}
 	if !logx.IsHlogBacked(fakeHlog{}) {
 		t.Error("实现 HlogBacked 标记的 logger 应被 IsHlogBacked 识别")
-	}
-}
-
-// —— sink.go：MultiSink / FileSink / RotatingSink ——
-
-type errSink struct{}
-
-func (e *errSink) Write([]byte) (int, error) { return 0, errors.New("boom") }
-func (e *errSink) Sync() error               { return errors.New("sync-boom") }
-func (e *errSink) Close() error              { return nil }
-
-type memSink struct {
-	mu  sync.Mutex
-	buf strings.Builder
-}
-
-func (m *memSink) Write(p []byte) (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.buf.Write(p)
-}
-func (m *memSink) Sync() error  { return nil }
-func (m *memSink) Close() error { return nil }
-
-func TestMultiSink_WriteErrorIsolated_SyncAndClose(t *testing.T) {
-	mem := &memSink{}
-	sink := logx.NewMultiSink(&errSink{}, mem)
-	if _, err := sink.Write([]byte("x")); err != nil {
-		t.Fatalf("单 sink 失败不应阻塞整体: %v", err)
-	}
-	if !strings.Contains(mem.buf.String(), "x") {
-		t.Errorf("健康 sink 未收到写入: %q", mem.buf.String())
-	}
-	if err := sink.Sync(); err == nil {
-		t.Error("Sync 应上抛 sink 错误")
-	}
-	if err := sink.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if _, err := sink.Write([]byte("y")); !errors.Is(err, os.ErrClosed) {
-		t.Errorf("关闭后 Write = %v, want os.ErrClosed", err)
-	}
-	if err := sink.Sync(); !errors.Is(err, os.ErrClosed) {
-		t.Errorf("关闭后 Sync = %v, want os.ErrClosed", err)
-	}
-}
-
-func TestFileSink_WriteSyncClosedCycle(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "a.log")
-	sink, err := logx.NewFileSink(path)
-	if err != nil {
-		t.Fatalf("NewFileSink: %v", err)
-	}
-	if _, err := sink.Write([]byte("hello")); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
-	if err := sink.Sync(); err != nil {
-		t.Fatalf("Sync: %v", err)
-	}
-	if err := sink.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	if _, err := sink.Write([]byte("z")); !errors.Is(err, os.ErrClosed) {
-		t.Errorf("关闭后 Write = %v, want os.ErrClosed", err)
-	}
-	if err := sink.Sync(); !errors.Is(err, os.ErrClosed) {
-		t.Errorf("关闭后 Sync = %v, want os.ErrClosed", err)
-	}
-}
-
-func TestRotatingSink_WritesAndRotates(t *testing.T) {
-	base := filepath.Join(t.TempDir(), "rot.log")
-	sink, err := logx.NewRotatingSink(base, 1)
-	if err != nil {
-		t.Fatalf("NewRotatingSink: %v", err)
-	}
-	for i := 0; i < 100; i++ {
-		if _, err := sink.Write([]byte("rotating-sink-line-padding-0123456789\n")); err != nil {
-			t.Fatalf("Write: %v", err)
-		}
-	}
-	if err := sink.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
 	}
 }
 

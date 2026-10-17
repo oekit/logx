@@ -14,13 +14,13 @@ import "context"
 //	// 正确：调用时才解析；component 以 component=<name> 属性标识来源子系统。
 //	var log = logx.Delegating("mypkg")
 //
-// component 可选且仅取第一个；service name 属于消费方，包归属统一用
-// component 属性标识。WithService/WithAttrs/WithGroup/WithCtx 返回的
-// 子 logger 同样保持懒解析。
-func Delegating(component ...string) Logger {
+// component 为该包/子系统的归属名；传空串表示不打 component 属性。
+// service name 属于消费方，包归属统一用 component 属性标识。
+// WithService/WithAttrs/WithGroup/WithCtx 返回的子 logger 同样保持懒解析。
+func Delegating(component string) Logger {
 	d := delegatingLogger{resolve: Default}
-	if len(component) > 0 && component[0] != "" {
-		name := component[0]
+	if component != "" {
+		name := component
 		d.resolve = func() Logger {
 			return Default().WithAttrs(Attr{Key: "component", Value: name})
 		}

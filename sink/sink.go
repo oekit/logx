@@ -1,4 +1,4 @@
-package logx
+package sink
 
 import (
 	"os"

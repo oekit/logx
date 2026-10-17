@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+- **feat(logx)**：`Delegating` 签名改为单参 `Delegating(component string)`——
+  原变参「只取第一个、静默丢弃其余」与签名暗示不符；传空串表示不打
+  component 属性。多参调用改为编译期报错
+  （[#8](https://github.com/oekit/logx/issues/8)）
+- **refactor(sink)**：`Sink`/`MultiSink`/`FileSink`/`RotatingSink`/`RotatingOption`
+  整体迁至嵌套模块 `github.com/oekit/logx/sink`（含 lumberjack）。根包自此
+  **纯 stdlib、零外部依赖**，不再向只用门面的消费者传递 lumberjack
+  （[#7](https://github.com/oekit/logx/issues/7)）。
+  **breaking**：`logx.NewFileSink` 等改从 `github.com/oekit/logx/sink` 引用
+  （`sink.NewFileSink`）；0.x 不留根包别名，避免 lumberjack 经别名回流
+
 ## [v0.3.0] — 2026-10-17
 
 - **feat(slog)**：`NewSlogLogger` 支持 `SlogOption` 注入消费方自有的 `slog.Handler`

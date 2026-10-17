@@ -60,7 +60,7 @@ func swapDefault(t *testing.T, l Logger) {
 // （模拟为 SetDefault 之前），消费方随后在 main() 中 SetDefault，
 // delegating logger 必须跟随新的默认实现而非绑定 init 时刻的旧 logger。
 func TestDelegating_FollowsSetDefault(t *testing.T) {
-	d := Delegating()
+	d := Delegating("")
 
 	r1 := &recordLogger{}
 	swapDefault(t, r1)
@@ -96,7 +96,7 @@ func TestDelegating_NoComponent(t *testing.T) {
 	r := &recordLogger{}
 	swapDefault(t, r)
 
-	Delegating().Info("x")
+	Delegating("").Info("x")
 	Delegating("").Info("y")
 	if len(r.attrs) != 0 {
 		t.Fatalf("expected no attrs without component, got %v", r.attrs)
@@ -137,7 +137,7 @@ func TestDelegating_CtxMethods(t *testing.T) {
 	swapDefault(t, r)
 
 	ctx := context.Background()
-	Delegating().CtxInfo(ctx, "c")
+	Delegating("").CtxInfo(ctx, "c")
 	if len(r.ctxs) != 1 || r.ctxs[0] != ctx {
 		t.Fatalf("expected ctx forwarded, got %v", r.ctxs)
 	}
@@ -148,7 +148,7 @@ func TestDelegating_SetLevel(t *testing.T) {
 	r := &recordLogger{}
 	swapDefault(t, r)
 
-	Delegating().SetLevel(LevelWarn)
+	Delegating("").SetLevel(LevelWarn)
 	if r.level == nil || *r.level != LevelWarn {
 		t.Fatalf("expected SetLevel(LevelWarn) forwarded, got %v", r.level)
 	}

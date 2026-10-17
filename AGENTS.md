@@ -4,16 +4,16 @@
 > 当前版本：`v0.3.0` · module：`github.com/oekit/logx` · org：[oekit = Open Easy Kit](https://oekit.github.io)
 
 ## 本仓包含（嵌套多模块：1 根模块 + 3 嵌套模块）
-- `./` —— 根模块 `github.com/oekit/logx`（门面 + std/slog 后端 + Sink + shutdown + internal/logxcallertest）
+- `./` —— 根模块 `github.com/oekit/logx`（门面 + std/slog 后端 + shutdown + internal/logxcallertest）
+- `sink/` —— 嵌套模块 `github.com/oekit/logx/sink`（Sink/FileSink/RotatingSink/MultiSink，依赖 lumberjack）
 - `hlog/` —— 嵌套模块 `github.com/oekit/logx/hlog`（Hertz hlog 后端，依赖 cloudwego/hertz）
 - `hertzlog/` —— 嵌套模块 `github.com/oekit/logx/hertzlog`（hertz-contrib logrus/zap/zerolog/slog 桥接）
 - `kitexlog/` —— 嵌套模块 `github.com/oekit/logx/kitexlog`（Kitex klog→logx 桥接，依赖 cloudwego/kitex）
 
 **嵌套模块 tag 约定**：根模块 `vX.Y.Z`；嵌套模块子路径 tag `<子目录>/vX.Y.Z`
-（如 `hlog/v0.1.0`、`hertzlog/v0.1.0`、`kitexlog/v0.1.0`；先例 oekit/bootstrap 的 `nacos/`、`obs/`）。
+（如 `sink/v0.1.0`、`hlog/v0.1.0`、`hertzlog/v0.1.0`、`kitexlog/v0.1.0`；先例 oekit/bootstrap 的 `nacos/`、`obs/`）。
 
-**硬规则：根模块 go.mod 禁止出现框架依赖**（hertz/kitex/zap/zerolog/logrus 及
-hertz-contrib 桥接）——Go 依赖图是模块级的，根模块的 require 会进所有消费者的
+**硬规则：根模块 go.mod 禁止出现任何外部依赖**（含 lumberjack 与 hertz/kitex/zap/zerolog/logrus 等框架桥接）——Go 依赖图是模块级的，根模块的 require 会进所有消费者的
 依赖图；框架桥接一律放对应嵌套模块，本地开发解析用 go.work use + replace。
 
 ## 硬规则速览（全矩阵适用）
