@@ -1,20 +1,10 @@
 # AGENTS.md — oekit/logx
 
-> 统一日志门面（接口分层 / 多后端 / Sink / caller 归属）+ shutdown 优雅关停
-> 当前版本：`v0.4.0` · module：`github.com/oekit/logx` · org：[oekit = Open Easy Kit](https://oekit.github.io)
+> 统一日志门面（多后端可替换 + Sink + caller 归属）+ 优雅关停；桥接子包 hlog/hertzlog/kitexlog 为嵌套模块按需引入
+> 当前版本：`v0.5.0` · module：`github.com/oekit/logx` · org：[oekit = Open Easy Kit](https://oekit.github.io)
 
-## 本仓包含（嵌套多模块：1 根模块 + 3 嵌套模块）
-- `./` —— 根模块 `github.com/oekit/logx`（门面 + std/slog 后端 + shutdown 兼容层（Deprecated，见 core/lifecycle）+ internal/logxcallertest）
-- `sink/` —— 嵌套模块 `github.com/oekit/logx/sink`（Sink/FileSink/RotatingSink/MultiSink，依赖 lumberjack）
-- `hlog/` —— 嵌套模块 `github.com/oekit/logx/hlog`（Hertz hlog 后端，依赖 cloudwego/hertz）
-- `hertzlog/` —— 嵌套模块 `github.com/oekit/logx/hertzlog`（hertz-contrib logrus/zap/zerolog/slog 桥接）
-- `kitexlog/` —— 嵌套模块 `github.com/oekit/logx/kitexlog`（Kitex klog→logx 桥接，依赖 cloudwego/kitex）
-
-**嵌套模块 tag 约定**：根模块 `vX.Y.Z`；嵌套模块子路径 tag `<子目录>/vX.Y.Z`
-（如 `sink/v0.1.0`、`hlog/v0.1.0`、`hertzlog/v0.1.0`、`kitexlog/v0.1.0`；先例 oekit/bootstrap 的 `nacos/`、`obs/`）。
-
-**硬规则：根模块 go.mod 禁止出现任何外部依赖**（含 lumberjack 与 hertz/kitex/zap/zerolog/logrus 等框架桥接）——Go 依赖图是模块级的，根模块的 require 会进所有消费者的
-依赖图；框架桥接一律放对应嵌套模块，本地开发解析用 go.work use + replace。
+## 本仓包含
+`./`、`hertzlog/`、`hlog/`、`internal/logxcallertest/`、`kitexlog/`、`shutdown/`、`sink/`
 
 ## 硬规则速览（全矩阵适用）
 
@@ -34,9 +24,6 @@
   **SDK/基础包必须 `logx.Delegating("组件名")` 懒解析**（禁止 Default()/WithService 声明包级 logger）
 - kv 结构化风格为默认；`Ctx*` 方法自动携带 trace_id；禁止 printf 风格 `logx.Infof` 作为主要手段
 - 后端经 `logx.SetDefault` 替换；`LOG_LEVEL` 环境变量统一生效
-- 桥接子包按需引入（各自为嵌套模块，独立 go.mod/tag）：`hlog`（Hertz hlog 后端）、
-  `hertzlog`（logrus/zap/zerolog/slog→hlog）、`kitexlog`（Kitex klog→logx，自 oekit/kitex 迁入）；
-  hlog 后端 Logger 禁止传入 `hertz.NewLogger`/`kitexlog.NewLogger`（无限递归，运行时 panic 防御）
 
 ### 并发安全
 - 禁止裸 `go func`：用 `github.com/oekit/concurrency/async` 的 GoSafe 系列（panic 被 recover）
