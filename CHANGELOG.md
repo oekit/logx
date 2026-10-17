@@ -2,6 +2,12 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.6.0] — 2026-10-17
+
+### Added（go-kratos 对齐）
+- `WithFilter(l, ...FilterOption)` 脱敏/丢弃包装：`FilterKey`（命中键值替换为 `***`，覆盖 Core/Ctx/Fmt 全路径，子 logger 保持规则）、`FilterFunc`（命中即丢整条）
+- `SlogHandler(l)` / `Slogger(l)`：logx.Logger 正向桥接为 `*slog.Logger`（与 slog 后端反向桥对称；级别按名称映射，WithGroup 实现为键前缀），期望 slog 的三方库可直接消费 logx 生态
+
 
 ## [v0.5.1] — 2026-10-17
 
