@@ -23,7 +23,9 @@
 - 门面 `github.com/oekit/logx`：业务服务 `logx.WithService("svc")`；
   **SDK/基础包必须 `logx.Delegating("组件名")` 懒解析**（禁止 Default()/WithService 声明包级 logger）
 - kv 结构化风格为默认；`Ctx*` 方法自动携带 trace_id；禁止 printf 风格 `logx.Infof` 作为主要手段
-- 后端经 `logx.SetDefault` 替换；`LOG_LEVEL` 环境变量统一生效
+- 后端经 `logx.SetDefault` 替换；`LOG_LEVEL` 环境变量统一生效（`NewSlogLogger` 自 v0.3.0 起尊重之）
+- **审计/合规/安全留痕 logger 必须 `logx.NewAuditLogger("组件名")` 或显式 `WithLevel(LevelInfo)`**
+  ——禁止裸 `NewSlogLogger` 依赖默认级别，否则 `LOG_LEVEL=warn` 会静默吞掉审计事件
 
 ### 并发安全
 - 禁止裸 `go func`：用 `github.com/oekit/concurrency/async` 的 GoSafe 系列（panic 被 recover）

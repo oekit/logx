@@ -3,6 +3,13 @@
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
 
+## [Unreleased]
+
+- **feat(logx)**：`NewAuditLogger(service)`——审计/合规/安全留痕 logger，级别锁
+  LevelInfo，不受 `LOG_LEVEL` 降级；`SetLevel` 调到 WARN/ERROR 被拒绝（`With*`
+  派生仍保持守卫）。门面级承诺「审计留痕不被部署配置静默过滤」
+  （[#10](https://github.com/oekit/logx/issues/10)）
+
 ## [hlog/v0.1.1 + kitexlog/v0.1.1] — 2026-10-17
 
 - fix(deps): 嵌套模块 hlog/kitexlog 依赖地板 logx v0.2.0 → v0.5.0（LevelEnabler 线）；本仓根模块无变化
@@ -44,9 +51,13 @@
 - **feat(slog)**：`NewSlogLogger` 支持 `SlogOption` 注入消费方自有的 `slog.Handler`
   （`WithHandler`），保留既有日志格式（TextHandler / 文件轮转 / fan-out 等），
   「日志格式归消费方、门面归 logx」成立；未注入时仍走内置 JSON→stdout，纯增量。
-  另提供 `WithLevel` 显式指定级别；级别优先级：`WithLevel` > `LOG_LEVEL` 环境变量 >
-  默认 `LevelInfo`（`NewSlogLogger` 现按此口径生效，原先忽略 `LOG_LEVEL`）
+  另提供 `WithLevel` 显式指定级别
   （[#6](https://github.com/oekit/logx/issues/6)）
+- **breaking / behavior change**：`NewSlogLogger` 尊重 `LOG_LEVEL`（原先忽略）。
+  级别优先级：`WithLevel` > `LOG_LEVEL` > 默认 `LevelInfo`。裸调 `NewSlogLogger(svc)`
+  的消费方在部署了 `LOG_LEVEL=warn|error` 时会过滤 Info/Debug——**审计/合规类
+  logger 必须显式 `WithLevel(LevelInfo)` 或改用 `NewAuditLogger`**，否则留痕静默丢失
+  （[#10](https://github.com/oekit/logx/issues/10)）
 - **feat(shutdown)**：`WithLogger(l *slog.Logger) ManagerOption` 注入宿主日志——
   Manager 内部日志（含 job 名等结构化字段）写入宿主 slog.Logger，与宿主日志体系
   统一采集；不注入时保持默认 logx sink（component=shutdown）不变

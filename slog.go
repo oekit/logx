@@ -404,3 +404,77 @@ func sprintf(format string, args ...any) string {
 	}
 	return fmt.Sprintf(format, args...)
 }
+
+// NewAuditLogger 创建审计/合规/安全留痕类 Logger。
+//
+// 级别锁定在 LevelInfo（及更细），不受 LOG_LEVEL 环境变量降级；SetLevel
+// 试图调到 WARN/ERROR 会被拒绝——审计事件不得被部署配置静默过滤。
+// 需要更细粒度可用 SetLevel(LevelDebug)。
+//
+// 业务日志请用 NewSlogLogger；本构造仅用于「留痕不可丢」的路径
+// （登录、越权、配置变更、合规操作等）。
+func NewAuditLogger(service string, opts ...SlogOption) Logger {
+	// WithLevel 置于最后，覆盖 opts 里可能的降级与 LOG_LEVEL
+	opts = append(opts, WithLevel(LevelInfo))
+	return auditLogger{inner: NewSlogLogger(service, opts...)}
+}
+
+// auditLogger 包装任意 Logger，拒绝将级别调到会吞掉 Info 审计事件的档位。
+type auditLogger struct{ inner Logger }
+
+func (a auditLogger) SetLevel(level Level) {
+	if level > LevelInfo {
+		return // 拒绝降级：Info 级审计必须保留
+	}
+	a.inner.SetLevel(level)
+}
+
+func (a auditLogger) WithCtx(ctx context.Context) Logger {
+	return auditLogger{inner: a.inner.WithCtx(ctx)}
+}
+func (a auditLogger) WithService(name string) Logger {
+	return auditLogger{inner: a.inner.WithService(name)}
+}
+func (a auditLogger) WithAttrs(attrs ...Attr) Logger {
+	return auditLogger{inner: a.inner.WithAttrs(attrs...)}
+}
+func (a auditLogger) WithGroup(name string) Logger {
+	return auditLogger{inner: a.inner.WithGroup(name)}
+}
+
+// 其余 Logger 方法委托 inner。
+func (a auditLogger) Debug(msg string, kv ...any) { a.inner.Debug(msg, kv...) }
+func (a auditLogger) Info(msg string, kv ...any)  { a.inner.Info(msg, kv...) }
+func (a auditLogger) Warn(msg string, kv ...any)  { a.inner.Warn(msg, kv...) }
+func (a auditLogger) Error(msg string, kv ...any) { a.inner.Error(msg, kv...) }
+
+func (a auditLogger) Debugf(format string, args ...any) { a.inner.Debugf(format, args...) }
+func (a auditLogger) Infof(format string, args ...any)  { a.inner.Infof(format, args...) }
+func (a auditLogger) Warnf(format string, args ...any)  { a.inner.Warnf(format, args...) }
+func (a auditLogger) Errorf(format string, args ...any) { a.inner.Errorf(format, args...) }
+
+func (a auditLogger) CtxDebug(ctx context.Context, msg string, kv ...any) {
+	a.inner.CtxDebug(ctx, msg, kv...)
+}
+func (a auditLogger) CtxInfo(ctx context.Context, msg string, kv ...any) {
+	a.inner.CtxInfo(ctx, msg, kv...)
+}
+func (a auditLogger) CtxWarn(ctx context.Context, msg string, kv ...any) {
+	a.inner.CtxWarn(ctx, msg, kv...)
+}
+func (a auditLogger) CtxError(ctx context.Context, msg string, kv ...any) {
+	a.inner.CtxError(ctx, msg, kv...)
+}
+
+func (a auditLogger) CtxDebugf(ctx context.Context, format string, args ...any) {
+	a.inner.CtxDebugf(ctx, format, args...)
+}
+func (a auditLogger) CtxInfof(ctx context.Context, format string, args ...any) {
+	a.inner.CtxInfof(ctx, format, args...)
+}
+func (a auditLogger) CtxWarnf(ctx context.Context, format string, args ...any) {
+	a.inner.CtxWarnf(ctx, format, args...)
+}
+func (a auditLogger) CtxErrorf(ctx context.Context, format string, args ...any) {
+	a.inner.CtxErrorf(ctx, format, args...)
+}
