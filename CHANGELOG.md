@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [v0.3.0] — 2026-10-17
+
 - **feat(slog)**：`NewSlogLogger` 支持 `SlogOption` 注入消费方自有的 `slog.Handler`
   （`WithHandler`），保留既有日志格式（TextHandler / 文件轮转 / fan-out 等），
   「日志格式归消费方、门面归 logx」成立；未注入时仍走内置 JSON→stdout，纯增量。

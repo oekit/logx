@@ -10,7 +10,7 @@
 根门面（**仅依赖 stdlib + lumberjack，零框架依赖**）：
 
 ```bash
-go get github.com/oekit/logx@v0.2.0
+go get github.com/oekit/logx@v0.3.0
 ```
 
 ## 模块布局（1 根模块 + 3 嵌套模块）
@@ -23,7 +23,7 @@ hertz/kitex/zap/zerolog/logrus 会进所有消费者的依赖图；拆分后只 
 
 | go.mod 路径 | module | 职责 | 框架依赖 | 安装 |
 |---|---|---|---|---|
-| `./` | `github.com/oekit/logx` | 统一门面 + std/slog 后端 + Sink + shutdown | 仅 lumberjack | `go get github.com/oekit/logx@v0.2.0` |
+| `./` | `github.com/oekit/logx` | 统一门面 + std/slog 后端 + Sink + shutdown | 仅 lumberjack | `go get github.com/oekit/logx@v0.3.0` |
 | `./hlog/` | `github.com/oekit/logx/hlog` | Hertz hlog 后端适配 | cloudwego/hertz | `go get github.com/oekit/logx/hlog@v0.1.0` |
 | `./hertzlog/` | `github.com/oekit/logx/hertzlog` | hertz-contrib logrus/zap/zerolog/slog 桥接 | hertz + hertz-contrib/logger/* + logrus/zap/zerolog | `go get github.com/oekit/logx/hertzlog@v0.1.0` |
 | `./kitexlog/` | `github.com/oekit/logx/kitexlog` | Kitex klog→logx 桥接（自 oekit/kitex 迁入） | cloudwego/kitex | `go get github.com/oekit/logx/kitexlog@v0.1.0` |
