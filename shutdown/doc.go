@@ -35,6 +35,16 @@
 //  3. 每个任务有独立的超时控制
 //  4. 多次调用 Shutdown 是安全的（sync.Once 保证）
 //
+// # 可观测性
+//
+//   - Errors：Shutdown 结束后读取 teardown/closer 失败（含 panic 隔离出的错误）
+//   - WithLogger：注入宿主 slog.Logger，内部日志（含 job 名）写入宿主日志体系；
+//     不注入则保持默认 logx sink（component=shutdown）
+//
+//	mgr := shutdown.New(10*time.Second, shutdown.WithLogger(hostLogger))
+//	mgr.Shutdown(ctx)
+//	for _, err := range mgr.Errors() { /* 上报告警 */ }
+//
 // # 与 bootstrap 集成
 //
 // bootstrap 包内部使用 shutdown.Manager 管理资源关闭：
