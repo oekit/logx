@@ -369,11 +369,11 @@ func TestStdLogger_logf_NotCalledWhenLevelTooLow(t *testing.T) {
 }
 
 // TestStdLogger_NewStdLogger_DefaultLevel covers the default
-// LevelDebug when no level argument is provided.
+// LevelInfo when no level argument is provided (#11 回归)。
 func TestStdLogger_NewStdLogger_DefaultLevel(t *testing.T) {
 	l := NewStdLogger("svc").(*stdLogger)
-	if l.Level != LevelDebug {
-		t.Errorf("expected default level=LevelDebug, got %d", l.Level)
+	if l.Level != LevelInfo {
+		t.Errorf("expected default level=LevelInfo, got %d", l.Level)
 	}
 }
 

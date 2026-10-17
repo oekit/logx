@@ -194,7 +194,7 @@ func TestGlobalShortcuts_RouteToDefault(t *testing.T) {
 	prevWriter := log.Writer()
 	log.SetOutput(writerFunc(func(p []byte) (int, error) { return buf.Write(p) }))
 	t.Cleanup(func() { log.SetOutput(prevWriter) })
-	setDefaultRestore(t, logx.NewStdLogger("shortcut-svc"))
+	setDefaultRestore(t, logx.NewStdLogger("shortcut-svc", logx.LevelDebug))
 
 	logx.WithService("svc-x").Error("shortcut")
 	logx.WithCtx(context.Background()).Warn("withctx")

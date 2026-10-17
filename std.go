@@ -13,9 +13,11 @@ type stdLogger struct {
 }
 
 // NewStdLogger 创建标准库实现的 Logger。
-// 默认级别为 LevelDebug。
+// 无 level 参数时默认 LevelInfo（与文档及 NewSlogLogger 一致；
+// 原先误用 LevelDebug=iota 零值，见 #11）。
+// 传入 level[0] 可显式指定。
 func NewStdLogger(service string, level ...Level) Logger {
-	l := &stdLogger{BaseLogger: BaseLogger{Service: service, Level: LevelDebug}}
+	l := &stdLogger{BaseLogger: BaseLogger{Service: service, Level: LevelInfo}}
 	if len(level) > 0 {
 		l.Level = level[0]
 	}

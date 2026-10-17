@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+- **fix(std)**：`NewStdLogger` 无参默认级别 `LevelDebug` → **`LevelInfo`**（#11）。
+  原先取 `LevelDebug` 是 `iota` 零值陷阱，与文档「默认 INFO」及 `NewSlogLogger`
+  行为相反；未设 `LOG_LEVEL` 的进程会把 Debug 全量打进生产。
+  按文档写断言的消费方此前会失败，本修正对齐契约。
+
+
 - **feat(logx)**：`NewAuditLogger(service)`——审计/合规/安全留痕 logger，级别锁
   LevelInfo，不受 `LOG_LEVEL` 降级；`SetLevel` 调到 WARN/ERROR 被拒绝（`With*`
   派生仍保持守卫）。门面级承诺「审计留痕不被部署配置静默过滤」
