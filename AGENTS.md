@@ -4,7 +4,7 @@
 > 当前版本：`v0.3.0` · module：`github.com/oekit/logx` · org：[oekit = Open Easy Kit](https://oekit.github.io)
 
 ## 本仓包含（嵌套多模块：1 根模块 + 3 嵌套模块）
-- `./` —— 根模块 `github.com/oekit/logx`（门面 + std/slog 后端 + shutdown + internal/logxcallertest）
+- `./` —— 根模块 `github.com/oekit/logx`（门面 + std/slog 后端 + shutdown 兼容层（Deprecated，见 core/lifecycle）+ internal/logxcallertest）
 - `sink/` —— 嵌套模块 `github.com/oekit/logx/sink`（Sink/FileSink/RotatingSink/MultiSink，依赖 lumberjack）
 - `hlog/` —— 嵌套模块 `github.com/oekit/logx/hlog`（Hertz hlog 后端，依赖 cloudwego/hertz）
 - `hertzlog/` —— 嵌套模块 `github.com/oekit/logx/hertzlog`（hertz-contrib logrus/zap/zerolog/slog 桥接）

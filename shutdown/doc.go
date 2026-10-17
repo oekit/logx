@@ -1,57 +1,14 @@
-// Package shutdown 提供优雅关闭管理器。
+// Package shutdown 是优雅关闭管理器的兼容转发层。
 //
-// 注册需要清理的资源，在收到 SIGINT/SIGTERM 信号时按序关闭。
+// Deprecated: 请改用 github.com/oekit/core/lifecycle.Manager。Manager 原语
+// 已归位 core/lifecycle（与 lifecycle.App 契约同域，零外部依赖）。本包
+// 仅保留类型别名，将于 logx v0.5.0 删除。
 //
-// # 快速接入
+// 迁移：
 //
-// 创建管理器：
+//	import "github.com/oekit/core/lifecycle"
 //
-//	mgr := shutdown.New(10 * time.Second)
-//
-// 注册资源：
-//
-//	mgr.Add("redis", func(ctx context.Context) error { return rdb.Close() }, 3*time.Second)
-//	mgr.Add("mysql", func(ctx context.Context) error { return sqlDB.Close() }, 5*time.Second)
-//	mgr.AddCloser("nats", natsClient, 3*time.Second)
-//
-// 监听信号：
-//
-//	mgr.Listen(syscall.SIGINT, syscall.SIGTERM)
-//
-// 或手动触发：
-//
-//	mgr.Shutdown(context.Background())
-//
-// # 注册方式
-//
-//   - Add: 注册带 context 和 error 返回的清理函数
-//   - AddCloser: 注册 io.Closer 资源
-//   - AddTeardown: 注册无参数的清理函数（不接受 context，不返回 error）
-//
-// # 执行顺序
-//
-//  1. 先执行所有 AddTeardown 注册的函数
-//  2. 再按注册顺序执行 Add/AddCloser 注册的任务
-//  3. 每个任务有独立的超时控制
-//  4. 多次调用 Shutdown 是安全的（sync.Once 保证）
-//
-// # 可观测性
-//
-//   - Errors：Shutdown 结束后读取 teardown/closer 失败（含 panic 隔离出的错误）
-//   - WithLogger：注入宿主 slog.Logger，内部日志（含 job 名）写入宿主日志体系；
-//     不注入则保持默认 logx sink（component=shutdown）
-//
-//	mgr := shutdown.New(10*time.Second, shutdown.WithLogger(hostLogger))
-//	mgr.Shutdown(ctx)
-//	for _, err := range mgr.Errors() { /* 上报告警 */ }
-//
-// # 与 bootstrap 集成
-//
-// bootstrap 包内部使用 shutdown.Manager 管理资源关闭：
-//
-//	b, _ := bootstrap.New(bootstrap.WithServiceName("svc")) // + nacos/obs WithXxx 按需注入
-//	b.Run(func(app *bootstrap.App) error {
-//	    app.AddResource("hertz", func(ctx context.Context) error { return h.Shutdown(ctx) })
-//	    // ...
-//	})
+//	mgr := lifecycle.New(10 * time.Second)
+//	mgr.Add("redis", closer, 3*time.Second)
+//	mgr.Listen(os.Interrupt)
 package shutdown

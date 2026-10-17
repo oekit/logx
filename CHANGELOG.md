@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+- **refactor(shutdown)**：`Manager` 原语迁至 [oekit/core](https://github.com/oekit/core)
+  `lifecycle` 包（与 `lifecycle.App` 契约同域，lifecycle 零外部依赖）。
+  `logx/shutdown` 保留类型别名转发一个版本（Deprecated），**v0.5.0 删除**；
+  请迁移到 `github.com/oekit/core/lifecycle`
+  （[oekit#1](https://github.com/oekit/oekit/issues/1)）
+
+
 - **feat(logx)**：`Delegating` 签名改为单参 `Delegating(component string)`——
   原变参「只取第一个、静默丢弃其余」与签名暗示不符；传空串表示不打
   component 属性。多参调用改为编译期报错
