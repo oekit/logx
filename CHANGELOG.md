@@ -3,6 +3,10 @@
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
 
+## [hlog/v0.1.1 + kitexlog/v0.1.1] — 2026-10-17
+
+- fix(deps): 嵌套模块 hlog/kitexlog 依赖地板 logx v0.2.0 → v0.5.0（LevelEnabler 线）；本仓根模块无变化
+
 ## [v0.5.0] — 2026-10-17
 
 - **feat(logger)**：新增 `LevelEnabler` 可选接口（`Enabled(level Level) bool`）+
