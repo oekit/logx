@@ -3,7 +3,7 @@
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
 
-## [Unreleased]
+## [v0.5.1] — 2026-10-17
 
 - **fix(std)**：`NewStdLogger` 无参默认级别 `LevelDebug` → **`LevelInfo`**（#11）。
   原先取 `LevelDebug` 是 `iota` 零值陷阱，与文档「默认 INFO」及 `NewSlogLogger`
