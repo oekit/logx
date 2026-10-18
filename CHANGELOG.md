@@ -35,6 +35,10 @@
   派生仍保持守卫）。门面级承诺「审计留痕不被部署配置静默过滤」
   （[#10](https://github.com/oekit/logx/issues/10)）
 
+## [hlog/v0.1.3 + kitexlog/v0.1.3] — 2026-10-18
+
+- chore(deps): 父模块地板 logx v0.6.0 → v0.7.0（WithFilter/Slogger 线；audit 嵌套地板门禁首发抓漏，matrix-tools#6）；本仓根模块无变化
+
 ## [hlog/v0.1.1 + kitexlog/v0.1.1] — 2026-10-17
 
 - fix(deps): 嵌套模块 hlog/kitexlog 依赖地板 logx v0.2.0 → v0.5.0（LevelEnabler 线）；本仓根模块无变化
