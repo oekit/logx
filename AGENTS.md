@@ -1,7 +1,7 @@
 # AGENTS.md — oekit/logx
 
 > 统一日志门面（多后端可替换 + Sink + caller 归属）+ 优雅关停；桥接子包 hlog/hertzlog/kitexlog 为嵌套模块按需引入
-> 当前版本：`v0.5.1` · module：`github.com/oekit/logx` · org：[oekit = Open Easy Kit](https://oekit.github.io)
+> 当前版本：`v0.7.0` · module：`github.com/oekit/logx` · org：[oekit = Open Easy Kit](https://oekit.github.io)
 
 ## 本仓包含
 `./`、`hertzlog/`、`hlog/`、`internal/logxcallertest/`、`kitexlog/`、`shutdown/`、`sink/`
