@@ -2,6 +2,10 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.7.1] — 2026-10-19
+
+- build: core 地板 v0.6.0 → v0.9.2（logx#22）——无直接 require core 的下游经 MVS 落到本仓声明的下界，抬至最新带动修复传递；logx 唯一使用的 core/lifecycle 逐字节未变，零行为风险
+
 ## [v0.7.0] — 2026-10-18
 
 ### Breaking
