@@ -1,7 +1,7 @@
 # AGENTS.md — oekit/logx
 
 > 统一日志门面（多后端可替换 + caller 归属；Sink 已迁嵌套模块 logx/sink，根包纯 stdlib）；WithFilter 脱敏/丢弃包装（FilterKey 命中键替换 ***/FilterFunc 丢整条，子 logger 保持规则）、Slogger/SlogHandler 正向桥（三方 slog 直接消费 logx 生态）、TraceHandler 任意 slog.Handler 自动注入 trace_id、NewAuditLogger 审计留痕（级别锁 Info，不受 LOG_LEVEL 降级）、LevelEnabler 热路径提前判级、ParseLogLevel 返回 (Level, error) + ParseLogLevelOr 配错退默认（v0.7.0）；优雅关停正身在 core/lifecycle.Manager（logx/shutdown 仅余 Deprecated 别名）；桥接子包 hlog/hertzlog/kitexlog 为嵌套模块按需引入
-> 当前版本：`v0.7.0` · module：`github.com/oekit/logx` · org：[oekit = Open Easy Kit](https://oekit.github.io)
+> 当前版本：`v0.7.1` · module：`github.com/oekit/logx` · org：[oekit = Open Easy Kit](https://oekit.github.io)
 
 ## 本仓包含
 `./`、`hertzlog/`、`hlog/`、`internal/logxcallertest/`、`kitexlog/`、`shutdown/`、`sink/`
