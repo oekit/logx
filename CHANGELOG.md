@@ -2,6 +2,16 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [hlog/v0.1.4] — 2026-10-22
+
+- build: 父模块地板 logx v0.7.0 → v0.7.1——logx v0.7.1 起 core 地板抬至 v0.9.2，
+  嵌套适配器经 MVS 随父模块传递该修正（无直接 require core 的下游落到父模块声明
+  的下界）；零代码改动
+
+## [kitexlog/v0.1.4] — 2026-10-22
+
+- build: 父模块地板 logx v0.7.0 → v0.7.1（同 hlog/v0.1.4）；零代码改动
+
 ## [v0.7.1] — 2026-10-19
 
 - build: core 地板 v0.6.0 → v0.9.2（logx#22）——无直接 require core 的下游经 MVS 落到本仓声明的下界，抬至最新带动修复传递；logx 唯一使用的 core/lifecycle 逐字节未变，零行为风险
