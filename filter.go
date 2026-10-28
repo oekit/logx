@@ -209,7 +209,28 @@ func (f *filterLogger) WithService(name string) Logger {
 }
 
 func (f *filterLogger) WithAttrs(attrs ...Attr) Logger {
-	return &filterLogger{base: f.base.WithAttrs(attrs...), cfg: f.cfg}
+	return &filterLogger{base: f.base.WithAttrs(f.maskAttrs(attrs)...), cfg: f.cfg}
+}
+
+// maskAttrs 把命中过滤键的属性值替换为 "***"（脱敏后再交给 base）。
+//
+// 不脱敏的话，WithAttrs 挂上去的属性会**原样**进日志：过滤只作用于「每次
+// 调用传进来的 kv」，WithAttrs 挂的属性完全绕过。WithFilter 的 godoc 明确
+// 承诺「WithAttrs/WithGroup/WithCtx 派生的子 logger 保持相同过滤规则」⇒
+// 旧实现是**谎报**：敏感信息照常落盘（实测：WithFilter(base, FilterKey("password"))
+// 之后 WithAttrs(Attr{Key:"password", Value:"hunter2"}) 会打出 password=hunter2）。
+func (f *filterLogger) maskAttrs(attrs []Attr) []Attr {
+	if len(f.cfg.keys) == 0 || len(attrs) == 0 {
+		return attrs
+	}
+	out := make([]Attr, len(attrs))
+	copy(out, attrs)
+	for i := range out {
+		if _, hit := f.cfg.keys[out[i].Key]; hit {
+			out[i].Value = "***"
+		}
+	}
+	return out
 }
 
 func (f *filterLogger) WithGroup(name string) Logger {
