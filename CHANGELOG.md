@@ -2,6 +2,10 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.7.2] — 2026-10-28
+
+- fix(filter): `WithFilter` 的脱敏此前只作用于「每次调用传进来的 kv」，`WithAttrs` 挂上去的属性原样进日志 ⇒ password 等敏感值照常落盘（而 `WithFilter` 的 godoc 明确承诺派生 logger 保持相同过滤规则）。修法：`WithAttrs` 先脱敏（命中键替换为 `***`）再交给 base
+
 ## [hlog/v0.1.4] — 2026-10-22
 
 - build: 父模块地板 logx v0.7.0 → v0.7.1——logx v0.7.1 起 core 地板抬至 v0.9.2，
