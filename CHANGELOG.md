@@ -2,6 +2,14 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [hlog/v0.1.6] — 2026-10-28
+
+- build: 父模块地板 logx v0.7.2 → v0.8.0（跟随父仓本轮发布）
+
+## [kitexlog/v0.1.6] — 2026-10-28
+
+- build: 父模块地板 logx v0.7.2 → v0.8.0（跟随父仓本轮发布）
+
 ## [v0.8.0] — 2026-10-28
 
 - feat(logx): 补静默 logger（`Nop()`）与「关闭」档（`LevelOff`）——组件把 logger 作为**依赖注入**传进来（这是好设计），于是测试成了唯一难受的地方：组件要一个 logger，测试里只能传真 logger ⇒ 日志直接刷到 stdout，把断言失败信息淹没在噪声里。此前想「不输出任何日志」只有两条路，都不成立：① 把级别设到 `LevelError`——**仍会打 error**，且构造器 `NewStdLogger(service)` 要求编一个 service 名；② 自己实现 `logx.Logger`——接口有 4 个结构化方法 + 4 个 printf 形态 + 4 个 `Ctx*` 形态 + `With*`/`SetLevel` 共 17 个方法，成本与收益不成比例 ⇒ 下游各写一份替代品或干脆绕开（实测下游 grep `nopLogger|NopLogger|DiscardLogger` 零命中 ⇒ 大家都绕开而不是各造一份）。新增：`Nop() Logger`（零输出；实现 `LevelEnabler` ⇒ `Enabled` 恒 false ⇒ 经 `logx.Enabled` 的热路径守卫会**跳过昂贵参数求值**（截断/序列化/拷贝），不只是不打印）、`LevelOff` 档（比 `LevelError` 更高 ⇒ 任何级别都不输出，用于「保留结构化日志但本进程不落盘」）、`ParseLogLevel` 认 `"OFF"`（此前 `LOG_LEVEL=OFF` 只能报「未知级别」再退回默认 ⇒ 「想彻底关掉日志」没有可达路径）。既有四档的取值、名称与行为逐字不变（#41）
