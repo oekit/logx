@@ -10,7 +10,7 @@
 根门面（**纯 stdlib，零外部依赖**）：
 
 ```bash
-go get github.com/oekit/logx@v0.7.1
+go get github.com/oekit/logx@v0.7.2
 ```
 
 ## 模块布局（1 根模块 + 3 嵌套模块）
@@ -23,7 +23,7 @@ hertz/kitex/zap/zerolog/logrus 会进所有消费者的依赖图；拆分后只 
 
 | go.mod 路径 | module | 职责 | 框架依赖 | 安装 |
 |---|---|---|---|---|
-| `./` | `github.com/oekit/logx` | 统一门面 + std/slog 后端 + shutdown | 无 | `go get github.com/oekit/logx@v0.7.1` |
+| `./` | `github.com/oekit/logx` | 统一门面 + std/slog 后端 + shutdown | 无 | `go get github.com/oekit/logx@v0.7.2` |
 | `./sink/` | `github.com/oekit/logx/sink` | Sink/FileSink/RotatingSink/MultiSink 多目标输出 | lumberjack | `go get github.com/oekit/logx/sink@v0.1.0` |
 | `./hlog/` | `github.com/oekit/logx/hlog` | Hertz hlog 后端适配 | cloudwego/hertz | `go get github.com/oekit/logx/hlog@v0.1.0` |
 | `./hertzlog/` | `github.com/oekit/logx/hertzlog` | hertz-contrib logrus/zap/zerolog/slog 桥接 | hertz + hertz-contrib/logger/* + logrus/zap/zerolog | `go get github.com/oekit/logx/hertzlog@v0.1.0` |
