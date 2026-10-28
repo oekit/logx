@@ -103,7 +103,7 @@ func init() {
 	defaultLoggerV.Store(&l)
 }
 
-// ParseLogLevel 解析级别字符串（DEBUG/INFO/WARN/ERROR，大小写不敏感）。
+// ParseLogLevel 解析级别字符串（DEBUG/INFO/WARN/ERROR/OFF，大小写不敏感）。
 // 未识别的值返回错误（#13：不再返回 *Level 指针——调用方漏判空会在
 // LOG_LEVEL 配错时得到远端解引用 panic）。空串按错误处理（区分「没配」），
 // 「配错就退回默认」的场景用 ParseLogLevelOr。
@@ -117,6 +117,10 @@ func ParseLogLevel(s string) (Level, error) {
 		return LevelWarn, nil
 	case "ERROR":
 		return LevelError, nil
+	case "OFF":
+		// 静默档（#41）：此前 LOG_LEVEL=OFF 只能报「未知级别」再退回默认，
+		// 于是「想彻底关掉日志」这件事没有可达路径。
+		return LevelOff, nil
 	default:
 		return LevelInfo, fmt.Errorf("logx: unknown level %q", s)
 	}

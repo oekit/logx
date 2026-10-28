@@ -32,10 +32,18 @@ const (
 	LevelInfo
 	LevelWarn
 	LevelError
+	// LevelOff 是「完全静默」档：比 LevelError 更高 ⇒ 任何级别都不输出。
+	//
+	// 用于「保留结构化日志但本进程不落盘」的场景——既有四档里最严的
+	// LevelError **仍会打 error**，而构造器 NewStdLogger 又要求编一个
+	// service 名；把级别设到 LevelOff 才是真正的「关掉」（#41）。
+	//
+	// 纯新增：不改动既有四档的取值与行为。
+	LevelOff
 )
 
 // levelStrings 日志级别名称数组。
-var levelStrings = [4]string{"DEBUG", "INFO", "WARN", "ERROR"}
+var levelStrings = [5]string{"DEBUG", "INFO", "WARN", "ERROR", "OFF"}
 
 // LevelString 返回日志级别的字符串表示。
 func LevelString(level Level) string {
