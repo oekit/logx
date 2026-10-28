@@ -4,5 +4,5 @@ go 1.24.0
 
 require (
 	github.com/cloudwego/kitex v0.16.4
-	github.com/oekit/logx v0.7.2
+	github.com/oekit/logx v0.8.0
 )
