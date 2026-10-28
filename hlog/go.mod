@@ -4,5 +4,5 @@ go 1.24.0
 
 require (
 	github.com/cloudwego/hertz v0.10.6
-	github.com/oekit/logx v0.7.1
+	github.com/oekit/logx v0.7.2
 )
