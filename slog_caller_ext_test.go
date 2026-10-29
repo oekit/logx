@@ -14,6 +14,15 @@ import (
 func TestSkipCallerFiles_EndToEnd(t *testing.T) {
 	probeFile := logxcallertest.File()
 
+	// **必须先保存并在结束时恢复注册表**：caller 跳过注册表是**进程级全局**，
+	// 而 SkipCallerFiles 只增不删（设计上就是"注册持久化到进程结束"）。
+	// 不恢复的话，本用例自己注册的探针文件会留在全局里 ⇒
+	// 第二次跑（-count=2 在同一进程内重复）时探针帧已被跳过 ⇒
+	// baseline 落到 testing 框架帧 ⇒ 用例红（实测 -count=1 绿、-count=2 红）。
+	// 恢复后本用例对 -count>1 幂等，且不向同批次其它用例泄漏注册表。
+	old := logx.CallerSkipFilesForTest()
+	t.Cleanup(func() { logx.SetCallerSkipFilesForTest(old) })
+
 	// 基线：caller 归属探针包文件（第一个包外帧）
 	base := logxcallertest.EmitCaller()
 	if !strings.Contains(base, "caller_probe.go") {
@@ -22,7 +31,6 @@ func TestSkipCallerFiles_EndToEnd(t *testing.T) {
 
 	// 注册探针文件后，探针帧按内部帧跳过，caller 归属更外层（logx 测试帧
 	// 因包名启发式同样被跳过，最终落到 testing 框架帧），不再出现探针文件。
-	// 注册持久化到进程结束：跳过的只有探针文件自身的帧，不影响其他测试。
 	logx.SkipCallerFiles(probeFile)
 	after := logxcallertest.EmitCaller()
 	if strings.Contains(after, "caller_probe.go") {
