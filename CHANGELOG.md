@@ -2,6 +2,18 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [kitexlog/v0.1.7] — 2026-11-03
+
+- build: 矩阵内依赖地板对齐——把父仓 logx v0.8.1 的地板带进已发布产物（hlog/kitexlog 原快照嵌的是 logx v0.8.0，消费方拿不到 core v0.12.1 的 Listen 修复）
+
+## [hlog/v0.1.7] — 2026-11-03
+
+- build: 矩阵内依赖地板对齐——把父仓 logx v0.8.1 的地板带进已发布产物（hlog/kitexlog 原快照嵌的是 logx v0.8.0，消费方拿不到 core v0.12.1 的 Listen 修复）
+
+## [v0.8.2] — 2026-11-03
+
+- build: 矩阵内依赖地板对齐——把父仓 logx v0.8.1 的地板带进已发布产物（hlog/kitexlog 原快照嵌的是 logx v0.8.0，消费方拿不到 core v0.12.1 的 Listen 修复）
+
 ## [v0.8.1] — 2026-11-03
 
 - fix(logx): caller 跳过注册表是进程级全局——测试必须自己恢复，否则对 -count>1 不幂等（PR #52）：SkipCallerFiles 注册的 caller 跳过文件是进程级全局且只增不删 ⇒ 用例自己注册的探针文件会留在全局里 ⇒ -count>1 时（同一进程内重复）探针帧已被跳过、baseline 落到 testing 框架帧⇒ 本地 -race -count=12 实测 11/12 轮红（CI 用 -count=1 所以不红）。改法：用 export_test.go暴露的注册表恢复钩子让测试自己恢复注册表 ⇒ 对 -count>1 幂等，且注册表不再泄漏给同批次的其它用例。只改测试文件，零 API 变更
