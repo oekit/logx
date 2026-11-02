@@ -5,7 +5,7 @@
 ## [v0.8.1] — 2026-11-03
 
 - fix(logx): caller 跳过注册表是进程级全局——测试必须自己恢复，否则对 -count>1 不幂等（PR #52）：SkipCallerFiles 注册的 caller 跳过文件是进程级全局且只增不删 ⇒ 用例自己注册的探针文件会留在全局里 ⇒ -count>1 时（同一进程内重复）探针帧已被跳过、baseline 落到 testing 框架帧⇒ 本地 -race -count=12 实测 11/12 轮红（CI 用 -count=1 所以不红）。改法：用 export_test.go暴露的注册表恢复钩子让测试自己恢复注册表 ⇒ 对 -count>1 幂等，且注册表不再泄漏给同批次的其它用例。只改测试文件，零 API 变更
-- build: 矩阵内依赖地板对齐（align_floors 不动点）：core v0.9.2 → v0.12.1——logx 唯一用到的是 core/lifecycle；**本区间 lifecycle/manager.go 确有变更**（`Listen` 补 `defer signal.Stop(ch)`——修 Listen 返回后信号仍被捕获进没人读的 channel、第二次 Ctrl-C / 容器 SIGTERM 不再终止进程，只能升级 SIGKILL）⇒ 经 logx/shutdown 的类型别名转发（`type Manager = lifecycle.Manager`）该修复**穿透到 logx 用户**。**本条为更正**：初版此处写「core/lifecycle 逐字节未变、抬地板只带动修复传递」**不成立**——该断言在 core v0.6.0 → v0.9.2 区间成立，被照搬到新区间却未复核（core v0.9.2 → v0.12.1 之间 lifecycle/manager.go +5 行，blob 738e7f8 → cc9d9a3）
+- build: 矩阵内依赖地板对齐（align_floors 不动点）（#57）：core v0.9.2 → v0.12.1——logx 唯一用到的是 core/lifecycle；**本区间 lifecycle/manager.go 确有变更**（`Listen` 补 `defer signal.Stop(ch)`——修 Listen 返回后信号仍被捕获进没人读的 channel、第二次 Ctrl-C / 容器 SIGTERM 不再终止进程，只能升级 SIGKILL）⇒ 经 logx/shutdown 的类型别名转发（`type Manager = lifecycle.Manager`）该修复**穿透到 logx 用户**。**本条为更正**：初版此处写「core/lifecycle 逐字节未变、抬地板只带动修复传递」**不成立**——该断言在 core v0.6.0 → v0.9.2 区间成立，被照搬到新区间却未复核（core v0.9.2 → v0.12.1 之间 lifecycle/manager.go +5 行，blob 738e7f8 → cc9d9a3）
 
 ## [hlog/v0.1.6] — 2026-10-28
 
