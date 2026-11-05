@@ -2,6 +2,10 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.8.3] — 2026-11-06
+
+- build: 矩阵依赖地板对齐（维护轮 #233）
+
 ## [kitexlog/v0.1.8] — 2026-11-03
 
 - build: 把父仓 logx v0.8.2 的地板带进已发布产物（hlog/kitexlog v0.1.7 的快照嵌的是 logx v0.8.1，消费方拿不到 v0.8.2 的内容）（logx#63）
