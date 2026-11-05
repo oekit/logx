@@ -1,4 +1,4 @@
 github.com/cloudwego/kitex v0.16.4 h1:x/HwNdlP6HEXr/xUBtLa6mxKKQPjLIaw0xWtThhqkLY=
 github.com/cloudwego/kitex v0.16.4/go.mod h1:Cs38y1qf+gdv3Vw6KmD+Wk3hvRS4EBx8Fu8dm6OYKeU=
-github.com/oekit/logx v0.8.2 h1:3WIlyxgqU9Y3pwf9fbflzBCgVdYOAe2UAyF9oTcFFas=
-github.com/oekit/logx v0.8.2/go.mod h1:nWe3O4L/07u2ixyvDakXaq4iYoWmSOoOqoJugNb1Zv0=
+github.com/oekit/logx v0.8.3 h1:NPsTpAiGSHyXBT06RUzs577t3PlZquTP+56Q2zZxVSo=
+github.com/oekit/logx v0.8.3/go.mod h1:PImzWIays3sTLxewhKh8wI8xqMlATVJxz6V0ifIgNso=
