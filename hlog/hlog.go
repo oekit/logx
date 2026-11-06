@@ -19,7 +19,6 @@ package hlog
 import (
 	"context"
 	"os"
-	"strings"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"github.com/oekit/logx"
@@ -31,8 +30,12 @@ type hlogLogger struct {
 }
 
 // NewHlogLogger 创建带 service name 的 hlog Logger。
+// 实例级别读 LOG_LEVEL 环境变量（#66，缺省 LevelInfo）——此前实例级别硬编码
+// LevelInfo：LOG_LEVEL=DEBUG 下 Debug 被实例 ShouldLog 拦截、=OFF 下 Info 照打，
+// README/doc/AGENTS 三处「LOG_LEVEL 统一控制所有后端」的承诺双双落空。
 func NewHlogLogger(service string) logx.Logger {
-	l := &hlogLogger{BaseLogger: logx.NewBaseLogger(service, logx.LevelInfo)}
+	l := &hlogLogger{BaseLogger: logx.NewBaseLogger(service,
+		logx.ParseLogLevelOr(os.Getenv("LOG_LEVEL"), logx.LevelInfo))}
 	l.initHlogLevel()
 	return l
 }
@@ -40,15 +43,18 @@ func NewHlogLogger(service string) logx.Logger {
 // IsHlogLogger 实现 logx.HlogBacked 标记接口，供 IsHlogBacked 运行时检查。
 func (l *hlogLogger) IsHlogLogger() {}
 
-// initHlogLevel 根据 LOG_LEVEL 环境变量设置 hlog 级别。
+// initHlogLevel 根据实例级别设置 hlog 进程全局级别（hlog 无实例级级别）。
 func (l *hlogLogger) initHlogLevel() {
-	lvl := strings.ToUpper(os.Getenv("LOG_LEVEL"))
-	switch lvl {
-	case "DEBUG":
+	switch l.Level {
+	case logx.LevelDebug:
 		hlog.SetLevel(hlog.LevelDebug)
-	case "WARN":
+	case logx.LevelWarn:
 		hlog.SetLevel(hlog.LevelWarn)
-	case "ERROR":
+	case logx.LevelError:
+		hlog.SetLevel(hlog.LevelError)
+	case logx.LevelOff:
+		// hlog 无 OFF 档：降到 Error 以外的最高档之后由实例 ShouldLog 兜底拦截
+		// （#66：此前 switch 无 OFF 分支，OFF 静默落 Info——「OFF 配置静默照打」）
 		hlog.SetLevel(hlog.LevelError)
 	default:
 		hlog.SetLevel(hlog.LevelInfo)

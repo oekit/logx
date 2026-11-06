@@ -143,19 +143,27 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 		record["caller"] = caller
 	}
 
-	// 持久化属性
+	// 框架字段名集合（#68）：time/level/message/service/trace_id/caller 由本函数
+	// 发布，用户 Attr/kv 同键冲突时**框架字段优先**、用户键加 "_" 前缀落地并打
+	// WARN——此前 map 赋值让用户值静默覆盖框架字段（trace_id 被覆盖 = 追踪链断），
+	// 与 trace_handler 的「已有同名字段不重复注入」、handler 路径的「原样重复」
+	// 形成三口径分裂；统一成「框架字段不可覆盖 + 显式改名 + WARN 可观测」。
+	reserved := map[string]bool{
+		"time": true, "level": true, "message": true,
+		"service": true, "trace_id": true, "caller": true,
+	}
 	for _, a := range l.Attrs {
-		record[a.Key] = logValue(a.Value)
+		putRecordField(record, reserved, a.Key, logValue(a.Value))
 	}
 
 	// 本次调用的 kv 对
 	for i := 0; i+1 < len(keysAndValues); i += 2 {
 		key := fmt.Sprintf("%v", keysAndValues[i])
-		record[key] = logValue(keysAndValues[i+1])
+		putRecordField(record, reserved, key, logValue(keysAndValues[i+1]))
 	}
 	if len(keysAndValues)%2 == 1 {
 		lastKey := fmt.Sprintf("%v", keysAndValues[len(keysAndValues)-1])
-		record[lastKey] = "(MISSING)"
+		putRecordField(record, reserved, lastKey, "(MISSING)")
 	}
 
 	buf, err := json.Marshal(record)
@@ -170,8 +178,11 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 		}
 		buf, _ = json.Marshal(fallback) // 仅字符串字段，不会失败
 	}
+	// 换行并入同一次 Write（#65）：两次 Write 之间无原子性保证，并发下另一
+	// goroutine 的记录体会插进本条与换行之间 ⇒ JSONL 拼行/空行，下游逐行解析
+	// 静默丢日志。对齐 log.Printf / log/slog JSONHandler 的整行单写纪律。
+	buf = append(buf, '\n')
 	os.Stdout.Write(buf)
-	os.Stdout.Write([]byte{'\n'})
 }
 
 // emitToHandler 将日志经消费方注入的 slog.Handler 输出。字段口径与内置 JSON
@@ -475,4 +486,21 @@ func (a auditLogger) CtxWarnf(ctx context.Context, format string, args ...any) {
 }
 func (a auditLogger) CtxErrorf(ctx context.Context, format string, args ...any) {
 	a.inner.CtxErrorf(ctx, format, args...)
+}
+
+// putRecordField 落一个字段进内置 JSON record（#68）：键与框架字段冲突时
+// 框架字段优先、用户键加 "_" 前缀落地，并在 record 里追加 "_renamed" 标记
+// 字段列出改名清单——不在日志流里打 WARN（logx 给自己打日志有递归风险），
+// 改名痕迹在每条记录里可 grep：`jq 'select(."​_renamed")'`。
+// "_" 前缀键与用户自造 "_" 键再冲突时不再二次改名（只损失用户数据，
+// 框架字段不受影响）。
+func putRecordField(record map[string]any, reserved map[string]bool, key string, v any) {
+	if !reserved[key] {
+		record[key] = v
+		return
+	}
+	renamed := "_" + key
+	record[renamed] = v
+	marks, _ := record["_renamed"].([]string)
+	record["_renamed"] = append(marks, key)
 }

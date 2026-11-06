@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
 )
 
@@ -17,7 +18,8 @@ type stdLogger struct {
 // 原先误用 LevelDebug=iota 零值，见 #11）。
 // 传入 level[0] 可显式指定。
 func NewStdLogger(service string, level ...Level) Logger {
-	l := &stdLogger{BaseLogger: BaseLogger{Service: service, Level: LevelInfo}}
+	l := &stdLogger{BaseLogger: BaseLogger{Service: service,
+		Level: ParseLogLevelOr(os.Getenv("LOG_LEVEL"), LevelInfo)}} // #66：对齐 init 默认实例与 slog 后端
 	if len(level) > 0 {
 		l.Level = level[0]
 	}
