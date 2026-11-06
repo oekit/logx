@@ -1,10 +1,10 @@
 package logx
 
 import (
-	"os"
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
 )
 

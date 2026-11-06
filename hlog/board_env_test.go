@@ -8,7 +8,7 @@ import (
 )
 
 // TestHlogLogger_ReadsLogLevelEnv 钉住 #66：NewHlogLogger 实例级别读 LOG_LEVEL
-//（含 OFF 档——此前 switch 无 OFF 分支静默落 Info，LOG_LEVEL=OFF 下 Info 照打）。
+// （含 OFF 档——此前 switch 无 OFF 分支静默落 Info，LOG_LEVEL=OFF 下 Info 照打）。
 func TestHlogLogger_ReadsLogLevelEnv(t *testing.T) {
 	old := os.Getenv("LOG_LEVEL")
 	defer os.Setenv("LOG_LEVEL", old)

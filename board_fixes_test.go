@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"sync"
-	"testing")
+	"testing"
+)
 
 // TestSlogLogger_SingleWriteJSONL 钉住 #65：内置 JSON 路径必须整行单次写。
 // 64 goroutine × 300 条并发写 os.Pipe，逐行读回——每行都必须是合法 JSON
@@ -140,4 +141,3 @@ func TestStdLogger_ReadsLogLevelEnv(t *testing.T) {
 		t.Fatalf("显式 level 应覆盖环境, got %v", got)
 	}
 }
-
