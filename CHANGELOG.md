@@ -10,6 +10,14 @@
 
 - build: 矩阵依赖地板对齐（维护轮 #233）
 
+## [v0.8.4] — 2026-11-06
+
+- fix(slog): 内置 JSON 路径整行单次 Write（[#65](https://github.com/oekit/logx/issues/65)）——此前记录体与换行分两次 `os.Stdout.Write`，写间无原子性保证：并发下另一 goroutine 的记录体插进本条与换行之间 ⇒ JSONL 拼行/空行（issue 实测 12% 行非法 JSON），下游逐行解析静默丢日志。修法：`'\n'` 并入 buf 单次写（对齐 log.Printf / log/slog JSONHandler 单写纪律）。补 16×120 并发 pipe 回读回归（读端先起——pipe 缓冲满会死锁写者，实测踩过）
+- fix(std+hlog): 构造器读 LOG_LEVEL + hlog switch 补 OFF 档（[#66](https://github.com/oekit/logx/issues/66)）——`NewStdLogger`/`NewHlogLogger` 此前不读环境变量（仅 init 默认实例读）：LOG_LEVEL=DEBUG 下 hlog 后端 Debug 零输出、=OFF 下 Info 照打（hlog switch 连 OFF 分支都没有，静默落 Info），README/doc/AGENTS 三处「LOG_LEVEL 统一控制所有后端」承诺双双落空。修法：构造器 `ParseLogLevelOr(os.Getenv("LOG_LEVEL"), LevelInfo)`（显式参数仍最高优先）；hlog OFF 分支全局级别抬 Error 兜底、输出面由实例 ShouldLog 拦截
+- fix(slog): 用户 kv 与框架字段同名统一为「框架字段优先 + 改名落地 + _renamed 标记」（[#68](https://github.com/oekit/logx/issues/68)）——此前包内三口径：内置 JSON 路径 map 赋值静默覆盖（trace_id 被覆盖=追踪链断）、trace_handler 不重复注入、handler 路径原样重复。统一为 time/level/message/service/trace_id/caller 六个框架字段不可覆盖、用户键加 "_" 前缀落地并追加 `_renamed` 改名清单（记录内可 grep `jq 'select(."_renamed")'`；不在日志流打 WARN——logx 给自己打日志有递归风险）
+
+关联问题单：logx#65、logx#66、logx#68。
+
 ## [v0.8.3] — 2026-11-06
 
 - build: 矩阵依赖地板对齐（维护轮 #233）

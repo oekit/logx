@@ -10,7 +10,7 @@
 根门面（**纯 stdlib，零外部依赖**）：
 
 ```bash
-go get github.com/oekit/logx@v0.8.2
+go get github.com/oekit/logx@v0.8.4
 ```
 
 ## 模块布局（1 根模块 + 3 嵌套模块）
