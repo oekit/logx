@@ -1,6 +1,7 @@
 package logx
 
 import (
+	"context"
 	"testing"
 )
 
@@ -70,7 +71,8 @@ func TestSetLevel_DeriveThenParentTightens(t *testing.T) {
 
 	// 反向：子实例调级同样不影响父实例
 	d2 := Delegating("comp2")
-	d2child := d2.WithCtx(nil)
+	var nilCtx context.Context // 经变量传 nil（SA1012 不收字面 nil）
+	d2child := d2.WithCtx(nilCtx)
 	d2child.SetLevel(LevelError)
 	if !Enabled(d2, LevelInfo) {
 		t.Errorf("子 logger 调级不应回写父实例")

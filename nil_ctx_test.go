@@ -1,8 +1,13 @@
 package logx
 
 import (
+	"context"
 	"testing"
 )
+
+// nilCtx 故意保持 nil 值：模拟错误处理路径上的 nil ctx（staticcheck SA1012
+// 不接受字面 nil 直传，经变量表达同一语义）。
+var nilCtx context.Context
 
 // TestExtractTrace_NilCtxNoPanic（#97）：注册提取器后 nil ctx 不再 nil 解引用
 // panic——ExtractTrace 返回空串，各后端/包装器的 Ctx* 全路径安全返回。
@@ -16,7 +21,7 @@ func TestExtractTrace_NilCtxNoPanic(t *testing.T) {
 	restore := setTestExtractor()
 	defer restore()
 
-	if got := ExtractTrace(nil); got != "" {
+	if got := ExtractTrace(nilCtx); got != "" {
 		t.Errorf("ExtractTrace(nil) = %q, want 空串", got)
 	}
 
@@ -28,13 +33,13 @@ func TestExtractTrace_NilCtxNoPanic(t *testing.T) {
 		"audit":      NewAuditLogger("svc"),
 	}
 	for name, l := range loggers {
-		l.CtxInfo(nil, "nil ctx must not panic", "backend", name)
-		l.CtxErrorf(nil, "nil ctx %s must not panic", name)
+		l.CtxInfo(nilCtx, "nil ctx must not panic", "backend", name)
+		l.CtxErrorf(nilCtx, "nil ctx %s must not panic", name)
 	}
 
 	// 注入 Handler 路径同样不 panic，且 Handle 收到非 nil ctx
 	h := newCaptureHandler()
-	NewSlogLogger("svc", WithHandler(h)).CtxInfo(nil, "handler path nil ctx")
+	NewSlogLogger("svc", WithHandler(h)).CtxInfo(nilCtx, "handler path nil ctx")
 	if len(h.snapshot()) != 1 {
 		t.Errorf("handler path: want 1 record, got %d", len(h.snapshot()))
 	}
