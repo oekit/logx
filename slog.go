@@ -238,7 +238,39 @@ func (l *slogLogger) emitAt(ctx context.Context, level Level, msg string, pc uin
 	// goroutine 的记录体会插进本条与换行之间 ⇒ JSONL 拼行/空行，下游逐行解析
 	// 静默丢日志。对齐 log.Printf / log/slog JSONHandler 的整行单写纪律。
 	buf = append(buf, '\n')
-	os.Stdout.Write(buf)
+	writeStdout(buf)
+}
+
+// stdoutWriteFailures 累计内置 JSON 路径 stdout 写失败次数；stdoutFailReported
+// 保证降级 stderr 报告只发一次（#79）。
+var (
+	stdoutWriteFailures atomic.Uint64
+	stdoutFailReported  atomic.Bool
+)
+
+// StdoutWriteFailures 返回内置 JSON 路径 stdout 写失败的累计次数（#79）。
+//
+// 排障入口：服务「没日志了」时先看它——非零说明写端坏了（stdout 被重定向
+// 到已关闭管道、磁盘满等），而不是日志没产生。此前 os.Stdout.Write 的返回
+// error 被直接丢弃，与同函数注释「绝不静默丢弃整条日志」的承诺自相矛盾。
+func StdoutWriteFailures() uint64 {
+	return stdoutWriteFailures.Load()
+}
+
+// writeStdout 写一行日志到 stdout（#79）：失败时计数，并降级到 stderr 报告
+// **一次**（附被丢弃的日志行，便于定位写端故障）——只报一次避免每条失败
+// 都写 stderr 形成二次风暴；后续失败静默计入 StdoutWriteFailures 计数。
+func writeStdout(buf []byte) {
+	_, err := os.Stdout.Write(buf)
+	if err == nil {
+		return
+	}
+	stdoutWriteFailures.Add(1)
+	if stdoutFailReported.CompareAndSwap(false, true) {
+		fmt.Fprintf(os.Stderr,
+			"logx: 内置 JSON 路径 stdout 写失败（本报告仅一次，后续失败计入 StdoutWriteFailures）: %v; 丢弃日志: %.200s\n",
+			err, buf)
+	}
 }
 
 // emitToHandler 将日志经消费方注入的 slog.Handler 输出。字段口径与内置 JSON
