@@ -644,6 +644,9 @@ func (a auditLogger) WithGroup(name string) Logger {
 	return auditLogger{inner: a.inner.WithGroup(name)}
 }
 
+// Unwrap 暴露被包装的内部 logger（#106）：IsHlogBacked 沿 Unwrap 链钻取。
+func (a auditLogger) Unwrap() Logger { return a.inner }
+
 // Enabled 透传内部后端的级别判定——LevelEnabler 实现（#76）。
 // 此前 auditLogger 未实现该接口，logx.Enabled 恒 true，热路径守卫在
 // 最常用的审计包装器上失效。

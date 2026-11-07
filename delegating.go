@@ -219,6 +219,11 @@ func (d delegatingLogger) WithGroup(name string) Logger {
 	return delegatingLogger{resolve: func() Logger { return d.resolve().WithGroup(name) }, override: d.deriveOverride()}
 }
 
+// Unwrap 暴露当前解析目标（#106）：IsHlogBacked 沿 Unwrap 链向下钻取，
+// Delegating 包装（如 SDK 包级 logger）落到 hlog 后端时递归防御仍生效。
+// 解析目标动态变化（SetDefault 后跟随），钻取取当下值。
+func (d delegatingLogger) Unwrap() Logger { return d.resolve() }
+
 // SetLevel 实例级调级（#81）：下限记录在本 wrapper 上，**不再转发修改全局
 // 默认 logger**——此前直接 resolve().SetLevel(level)，一个 SDK 包级
 // Delegating 变量调 SetLevel(LevelDebug) 会打开全进程日志，多组件各自调级

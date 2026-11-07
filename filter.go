@@ -352,6 +352,11 @@ func (f *filterLogger) Enabled(level Level) bool {
 	return Enabled(f.base, level)
 }
 
+// Unwrap 暴露被包装的底座 logger（#106）：IsHlogBacked 沿 Unwrap 链向下
+// 钻取，WithFilter 包一层后 kitexlog.NewLogger 的 hlog 递归防御仍生效——
+// 底座不是 hlog 后端时断言照旧失败（不产生误报）。
+func (f *filterLogger) Unwrap() Logger { return f.base }
+
 // SetLevel 实例级调级（#81）：下限记录在本 wrapper 上，**不再透传共享的
 // base**——此前直接 base.SetLevel(level)，而 base 可能是全局默认 logger 或
 // 父 logger：WithFilter 包一层后调 SetLevel 会改掉整棵树的级别，多组件
