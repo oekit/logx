@@ -30,10 +30,18 @@ import (
 //	logx.SetDefault(logx.NewSlogLogger("my-service", logx.WithHandler(myHandler)))
 type slogLogger struct {
 	BaseLogger
-	group string
+	// groups 是 WithGroup 累积的命名空间栈（#83）：slog 语义里链式
+	// WithGroup("a").WithGroup("b") 是嵌套命名空间 a.b，此前单 string 槽位
+	// 静默只留最后一层。
+	groups []string
 	// handler 非 nil 时走消费方注入的 slog.Handler，由其负责格式与输出；
 	// nil 时走内置 JSON→stdout 路径。构造后不可变，clone 时原样携带。
 	handler slog.Handler
+	// groupedHandler 是 groups 链已应用到 handler 的缓存（#87）：派生时
+	// 构建一次，避免每条记录重放 WithGroup 链（slog.Handler.WithGroup 按
+	// 约定应返回缓存好的派生 handler，重放是纯浪费）。handler 为 nil 时
+	// 保持 nil。
+	groupedHandler slog.Handler
 }
 
 // SlogOption 是 NewSlogLogger 的函数选项。
@@ -85,8 +93,9 @@ func (l *slogLogger) clone() *slogLogger {
 			Attrs:   append([]Attr(nil), cp.Attrs...),
 			Ctx:     cp.Ctx,
 		},
-		group:   l.group,
-		handler: l.handler,
+		groups:         append([]string(nil), l.groups...),
+		handler:        l.handler,
+		groupedHandler: l.groupedHandler,
 	}
 }
 
@@ -108,9 +117,32 @@ func (l *slogLogger) WithAttrs(attrs ...Attr) Logger {
 	return c
 }
 
+// WithGroup 返回带字段命名空间的子 logger（#75 #83）。
+//
+// slog 语义：group 是结构化字段的命名空间，链式调用**累积嵌套**——
+// WithGroup("a").WithGroup("b") 后用户字段落在 "a.b." 前缀下（此前单槽位
+// 静默只留最后一层）。两条输出路径统一生效：
+//
+//   - 内置 JSON 路径：用户 Attr/kv 键加 "<g1>.<g2>." 前缀（与 SlogHandler
+//     桥接的 "group.key" 方案同一口径）；框架字段（time/level/message/
+//     service/trace_id/caller）不进组。
+//   - 注入 Handler 路径：派生时把组链应用到 handler（h.WithGroup），由
+//     Handler 决定嵌套结构（缓存于派生实例，不在每条记录上重放）。
+//
+// name 为空串时为 no-op（对齐 slog.Handler.WithGroup 语义）。
 func (l *slogLogger) WithGroup(name string) Logger {
 	c := l.clone()
-	c.group = name
+	if name == "" {
+		return c
+	}
+	c.groups = append(c.groups, name)
+	if c.handler != nil {
+		h := c.handler
+		if c.groupedHandler != nil {
+			h = c.groupedHandler
+		}
+		c.groupedHandler = h.WithGroup(name)
+	}
 	return c
 }
 
@@ -152,18 +184,26 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 		"time": true, "level": true, "message": true,
 		"service": true, "trace_id": true, "caller": true,
 	}
+	// 用户字段命名空间前缀（#75 #83）：WithGroup 累积的组以 "<g1>.<g2>."
+	// 前缀施加到用户 Attr/kv 键——与 SlogHandler 桥接的 "group.key" 口径
+	// 一致；框架字段不进组。加前缀天然避开与框架字段的键冲突（"g.time"
+	// 不再撞 "time"，组即命名空间）。
+	groupPrefix := ""
+	if len(l.groups) > 0 {
+		groupPrefix = strings.Join(l.groups, ".") + "."
+	}
 	for _, a := range l.Attrs {
-		putRecordField(record, reserved, a.Key, logValue(a.Value))
+		putRecordField(record, reserved, groupPrefix+a.Key, logValue(a.Value))
 	}
 
 	// 本次调用的 kv 对
 	for i := 0; i+1 < len(keysAndValues); i += 2 {
 		key := fmt.Sprintf("%v", keysAndValues[i])
-		putRecordField(record, reserved, key, logValue(keysAndValues[i+1]))
+		putRecordField(record, reserved, groupPrefix+key, logValue(keysAndValues[i+1]))
 	}
 	if len(keysAndValues)%2 == 1 {
 		lastKey := fmt.Sprintf("%v", keysAndValues[len(keysAndValues)-1])
-		putRecordField(record, reserved, lastKey, "(MISSING)")
+		putRecordField(record, reserved, groupPrefix+lastKey, "(MISSING)")
 	}
 
 	buf, err := json.Marshal(record)
@@ -212,8 +252,9 @@ func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string,
 	}
 
 	h := l.handler
-	if l.group != "" {
-		h = h.WithGroup(l.group)
+	if l.groupedHandler != nil {
+		// 组链已在派生时应用到 handler 并缓存（#87），每条记录不再重放。
+		h = l.groupedHandler
 	}
 	rec := slog.NewRecord(time.Now(), slogLevel(level), msg, pc)
 	rec.AddAttrs(attrs...)
