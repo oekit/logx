@@ -33,7 +33,7 @@ func TestSlogHandler_WrappedChainCaller(t *testing.T) {
 // logx 内部帧）时，caller 仍归属真实调用方。此前探测循环上限 12 帧，
 // 超限静默返回 ""（caller 字段消失，消费方无从判断原因）。
 func TestCaller_DeepWrapperChain(t *testing.T) {
-	l := logx.Logger(logx.NewSlogLogger("svc"))
+	l := logx.NewSlogLogger("svc")
 	for i := 0; i < 15; i++ {
 		l = logx.WithFilter(l)
 	}
