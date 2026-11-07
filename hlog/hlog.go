@@ -120,6 +120,11 @@ func (l *hlogLogger) SetLevel(level logx.Level) {
 		hlog.SetLevel(hlog.LevelWarn)
 	case logx.LevelError:
 		hlog.SetLevel(hlog.LevelError)
+	case logx.LevelOff:
+		// 与 initHlogLevel 对齐（#102）：hlog 无 OFF 档，降到 Error 之后由
+		// 实例 ShouldLog 兜底拦截——此前缺此分支落 default，SetLevel(OFF)
+		// 反而把 hertz 全局级别从 Error 放宽到 Info，「关日志」变成「开日志」。
+		hlog.SetLevel(hlog.LevelError)
 	default:
 		hlog.SetLevel(hlog.LevelInfo)
 	}
