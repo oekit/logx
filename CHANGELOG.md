@@ -2,6 +2,25 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.8.5] — 2026-11-07
+
+- fix(slog): 内置 JSON 路径不再静默丢弃 WithGroup——用户 Attr/kv 施加组前缀，与 SlogHandler 桥接口径统一（#75）
+- fix(slog): WithGroup 链式调用不再只留最后一层——组栈累积嵌套（#83）
+- fix(slog): 桥接不再错标严重级/丢 r.PC/r.Time——阈值制级别映射（自定义级别不再降 INFO）、Warn 档不吞、caller 直通（#84）
+- fix(slog): caller 探测移除 12 帧上限——深调用栈不再静默丢 caller，行为文档化（#82）
+- perf(slog): caller 探测 O(k²)→O(k) 单遍回溯 + reserved map 包级化 + Handler 组链缓存（#87）
+- fix(std): logf 补挂 FormatAttrs——printf 与结构化路径字段面统一（#77）
+- fix(std): 消除双时间戳——私有 log.New 替代包级 log.Printf 的 LstdFlags（#78）
+- fix(hlog): printf 路径补挂 attrPrefix——Ctx*f 系列不再丢 WithAttrs（#86）
+- docs(filter): WithFilter printf 路径只评估不脱敏——显式声明敏感数据走 kv（#80）
+- fix(logger): filterLogger/auditLogger 实现 Enabled——热路径级别守卫恢复生效（#76）
+- fix(slog): stdout 写失败计数 + 一次性 stderr 报告——管道关闭不再静默丢日志，新增 StdoutWriteFailures()（#79）
+- fix(logger): SetLevel 改实例级下限——Delegating/WithFilter 子 logger 不再修改全局默认 logger（#81）
+- fix(filter): FilterKey 大小写不敏感匹配 + 非 string 键 %v 归一——键名变体绕过面关闭（#85）
+- build: 依赖地板对齐 core v0.13.1
+
+关联问题单：logx#75、logx#76、logx#77、logx#78、logx#79、logx#80、logx#81、logx#82、logx#83、logx#84、logx#85、logx#86、logx#87。
+
 ## [kitexlog/v0.1.9] — 2026-11-06
 
 - build: 矩阵依赖地板对齐（维护轮 #233）
