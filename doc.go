@@ -12,7 +12,10 @@
 //
 //	// 使用
 //	releaseLog.Info("creating release", "keyword", keyword)
-//	releaseLog.CtxError(ctx, "create failed", "err", err)
+//	releaseLog.CtxError(ctx, "create failed", logx.ErrKey, err)
+//
+//	// 错误字段名统一用导出常量 logx.ErrKey（值 "err"），不要手写字面量，
+//	// 更不要写成 "error"——两矩阵的错误字段必须收敛到同一个 key。
 //
 // # 替换底层实现
 //
