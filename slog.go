@@ -258,6 +258,24 @@ func StdoutWriteFailures() uint64 {
 	return stdoutWriteFailures.Load()
 }
 
+// handlerWriteFailures 累计注入 Handler 路径 slog.Handler.Handle 失败次数；
+// handlerFailReported 保证降级 stderr 报告只发一次（#98）。
+var (
+	handlerWriteFailures atomic.Uint64
+	handlerFailReported  atomic.Bool
+)
+
+// HandlerWriteFailures 返回注入 Handler 路径 slog.Handler.Handle 失败的
+// 累计次数（#98），与 StdoutWriteFailures 同为排障入口。
+//
+// Handle 返回 error 的语义是「这条记录没有写出去」；此前 emitToHandler 把
+// 它直接丢弃（`_ = h.Handle(...)`），注入的 Handler 恒错（磁盘满、下游
+// 阻塞等）时记录彻底消失且无任何信号——与内置路径「绝不静默丢弃」的
+// 契约在同函数另一条路径上被打破。
+func HandlerWriteFailures() uint64 {
+	return handlerWriteFailures.Load()
+}
+
 // writeStdout 写一行日志到 stdout（#79）：失败时计数，并降级到 stderr 报告
 // **一次**（附被丢弃的日志行，便于定位写端故障）——只报一次避免每条失败
 // 都写 stderr 形成二次风暴；后续失败静默计入 StdoutWriteFailures 计数。
@@ -316,7 +334,16 @@ func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string,
 	}
 	rec := slog.NewRecord(ts, slogLevel(level), msg, pc)
 	rec.AddAttrs(attrs...)
-	_ = h.Handle(ctx, rec)
+	// Handle 失败必须可观测（#98）：计数累加 + 一次性 stderr 报告（同内置
+	// 路径 writeStdout 口径），此前 `_ =` 直接吞掉，记录消失无任何信号。
+	if err := h.Handle(ctx, rec); err != nil {
+		handlerWriteFailures.Add(1)
+		if handlerFailReported.CompareAndSwap(false, true) {
+			fmt.Fprintf(os.Stderr,
+				"logx: 注入 Handler 路径 Handle 失败（本报告仅一次，后续失败计入 HandlerWriteFailures）: %v; 丢弃日志: %.200s\n",
+				err, msg)
+		}
+	}
 }
 
 // logxBridge 是 slogBridgeSink 的实现（#84）：SlogHandler 桥接直通入口，
