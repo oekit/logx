@@ -13,12 +13,24 @@ type stdLogger struct {
 	BaseLogger
 }
 
+// stdLogDynamicWriter 在**每次写入时**解析当前标准库 log 的输出目标
+// （gormx 地板抬到 v0.8.5 后实测回归）：#78 把输出目标从包级 log.Printf
+// 换成 log.New(os.Stderr, ...) 固化绑定后，消费方（gormx 的 PoolWarn/
+// redact 测试）经 log.SetOutput(buf) 的经典捕获法全部捕空——私有 logger
+// 绕过了 std log 的输出重定向。动态委托 log.Writer() 恢复该契约：
+// log.SetOutput 照常拦截、缺省仍是 os.Stderr、flags=0 单时间戳不变。
+type stdLogDynamicWriter struct{}
+
+func (stdLogDynamicWriter) Write(p []byte) (int, error) {
+	return log.Writer().Write(p)
+}
+
 // stdWriter 是 std 后端的私有输出器（#78）：本文件自带毫秒级 ts 前缀，
 // 此前用包级 log.Printf——其默认 LstdFlags 会在行首再叠一个秒级时间戳
 // （实测输出 "2026/11/06 22:53:19 2026-11-06 22:53:19.569 [INFO] ..."，
-// 双时间戳且前者无毫秒）。私有 log.Logger 置 flags=0，输出目标仍为
-// os.Stderr（与包级 log 默认一致）。
-var stdWriter = log.New(os.Stderr, "", 0)
+// 双时间戳且前者无毫秒）。私有 log.Logger 置 flags=0；输出目标动态委托
+// 当前 log.Writer()（缺省 os.Stderr，见 stdLogDynamicWriter）。
+var stdWriter = log.New(stdLogDynamicWriter{}, "", 0)
 
 // NewStdLogger 创建标准库实现的 Logger。
 // 无 level 参数时默认 LevelInfo（与文档及 NewSlogLogger 一致；

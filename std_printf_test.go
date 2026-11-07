@@ -1,6 +1,8 @@
 package logx
 
 import (
+	"bytes"
+	"log"
 	"regexp"
 	"strings"
 	"testing"
@@ -104,5 +106,30 @@ func TestGlobalShortcuts_RouteToDefault(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("输出缺 %q: %q", want, out)
 		}
+	}
+}
+
+// TestStdLogger_SetOutputInterception 钉住 gormx 地板抬升实测回归：
+// #78 的私有 log.New(os.Stderr,...) 固化绑定绕过了标准库 log 的输出
+// 重定向——消费方（gormx PoolWarn/redact 测试）经 log.SetOutput(buf)
+// 的经典捕获法全部捕空。stdWriter 现动态委托 log.Writer()，本测试
+// **只**用 log.SetOutput 捕获（不碰 stdWriter），恢复的契约必须钉住。
+func TestStdLogger_SetOutputInterception(t *testing.T) {
+	logMu.Lock()
+	t.Cleanup(func() { logMu.Unlock() })
+
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	NewStdLogger("svc", LevelDebug).Warnf("intercept-me")
+
+	out := buf.String()
+	if !strings.Contains(out, "intercept-me") {
+		t.Fatalf("log.SetOutput 应能拦截 std 后端输出（gormx 捕获形态）, got: %q", out)
+	}
+	if lstdFlagsTS.MatchString(out) {
+		t.Fatalf("单时间戳回归（LstdFlags 前缀复活）: %s", out)
 	}
 }
