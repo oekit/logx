@@ -248,8 +248,9 @@ func TestWithCtx_StdTraceInOutput(t *testing.T) {
 	defer restore()
 
 	var buf bytes.Buffer
-	stdWriter.SetOutput(&buf) // #78：std 后端经私有 log.Logger 输出
-	defer stdWriter.SetOutput(os.Stderr)
+	prevW := stdWriter.Writer() // #78：std 后端经私有 log.Logger 输出；恢复原 writer（可能是 stdLogDynamicWriter，直写 os.Stderr 会弄丢 log.SetOutput 拦截契约）
+	stdWriter.SetOutput(&buf)
+	defer stdWriter.SetOutput(prevW)
 
 	ctx := withTestTrace(context.Background(), "trace-xyz")
 	logger := NewStdLogger("svc", LevelDebug).WithCtx(ctx)
@@ -270,8 +271,9 @@ func TestWithCtx_StdNoTraceWithoutBinding(t *testing.T) {
 	defer restore()
 
 	var buf bytes.Buffer
-	stdWriter.SetOutput(&buf) // #78：std 后端经私有 log.Logger 输出
-	defer stdWriter.SetOutput(os.Stderr)
+	prevW := stdWriter.Writer() // #78：std 后端经私有 log.Logger 输出；恢复原 writer（可能是 stdLogDynamicWriter，直写 os.Stderr 会弄丢 log.SetOutput 拦截契约）
+	stdWriter.SetOutput(&buf)
+	defer stdWriter.SetOutput(prevW)
 
 	NewStdLogger("svc", LevelDebug).Info("no-ctx")
 	if strings.Contains(buf.String(), "[trace=") {
@@ -304,8 +306,9 @@ func TestWithCtx_ExplicitCtxWins(t *testing.T) {
 	defer restore()
 
 	var buf bytes.Buffer
-	stdWriter.SetOutput(&buf) // #78：std 后端经私有 log.Logger 输出
-	defer stdWriter.SetOutput(os.Stderr)
+	prevW := stdWriter.Writer() // #78：std 后端经私有 log.Logger 输出；恢复原 writer（可能是 stdLogDynamicWriter，直写 os.Stderr 会弄丢 log.SetOutput 拦截契约）
+	stdWriter.SetOutput(&buf)
+	defer stdWriter.SetOutput(prevW)
 
 	boundCtx := withTestTrace(context.Background(), "bound-trace")
 	explicitCtx := withTestTrace(context.Background(), "explicit-trace")
