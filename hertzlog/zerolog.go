@@ -21,7 +21,7 @@ type ZerologOpt = hertzcontribzerolog.Opt
 //
 //	zlog := zerolog.New(os.Stderr).With().Timestamp().Logger()
 //	ekitzlog := hertzlog.NewZerologLogger(zlog)
-//	hlog.SetLogger(hertzlog.AsHlogLoggerFromZerolog(ekitzlog))
+//	hlog.SetLogger(hertzlog.AsHlogLoggerZerolog(ekitzlog))
 func NewZerologLogger(log zerolog.Logger, opts ...ZerologOpt) *ZerologLogger {
 	return hertzcontribzerolog.From(log, opts...)
 }

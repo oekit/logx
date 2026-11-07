@@ -41,6 +41,8 @@ func NewZapLogger(opts ...ZapOption) *ZapLogger {
 	return hertzcontribzap.NewLogger(opts...)
 }
 
-// AsHlogLogger 把 ekit 子包包装的 *ZapLogger 适配成 hertz 框架 hlog.FullLogger
-// interface,业务用 hlog.SetLogger(AsHlogLogger(zapLogger)) 即可。
-// (ZapLogger 本身已经实现 hlog.FullLogger,直接返回)
+// AsHlogLoggerZap(定义于 aliases.go)把 ekit 子包包装的 *ZapLogger 适配成
+// hertz 框架 hlog.FullLogger interface,业务用
+// hlog.SetLogger(AsHlogLoggerZap(zapLogger)) 即可。
+// (ZapLogger 本身已经实现 hlog.FullLogger,直接返回;#105:此处示例曾引用
+// v0.1.7 已删除的旧名 AsHlogLogger,照抄即编译失败)
