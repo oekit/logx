@@ -2,6 +2,24 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.8.8] — 2026-11-08
+
+审计批次 2（11 项）：开工前逐 issue 在 main 复核，全部仍存在，均实施修复并附回归测试。
+
+- fix(hlog): 包级 RWMutex 消除 SetLevel 与并发日志的 data race——hertz 全局 level 是普通 int，「运行期调级 + 并发打日志」-race 必报；写锁（SetLevel/initHlogLevel）与全部 Ctx* 读锁互斥（#96）
+- fix(logger): ExtractTrace 与全部 Ctx* 入口兜底 nil ctx——注册提取器后 nil ctx 不再空指针崩进程，对齐 EffectiveCtx 口径（#97）
+- fix(slog): 注入 Handler 路径接住 slog.Handler.Handle 的 error——新增 HandlerWriteFailures() 计数 + 一次性 stderr 报告，记录不再无声消失（#98）
+- fix(slog): WithGroup 两条输出路径框架字段层级对齐——Handler 路径 service/trace_id/caller 保持记录顶层、用户字段经 slog.Group 包裹，切后端不再换 schema（#99）
+- fix(slog): 序列化降级记录补 service/trace_id/caller 与 WithAttrs 持久属性（值统一转字符串）——一条 NaN 不再让整条日志失去可关联性（#100）
+- fix(logger): 实例级 SetLevel 下限在 With* 派生时继承（delegating/filter），与后端 clone 拷 Level 语义对齐；delegating 假注释改写实（#101）
+- fix(hlog): SetLevel 补 LevelOff 分支对齐 initHlogLevel——「关日志」不再反向放宽到 Info（#102）
+- fix(sink): RotatingSink 显式覆写 Rotate()——Close 后返回 os.ErrClosed 不再 nil 解引用 panic，契约补全 Write/Sync/Rotate（#103）
+- fix(trace): TraceHandler 去重判定连同 WithAttrs 带入的键一起检查——输出不再出现重复 trace_id 键（#104）
+- docs(hertzlog): 导出 godoc 示例改用现存 API 名（AsHlogLoggerZap/Zerolog），照抄不再编译失败（#105）
+- fix(logger): IsHlogBacked 沿 Unwrap() 链钻取——WithFilter/Delegating/audit 包装形态下 kitexlog 递归防御不再静默失效（#106）
+
+关联问题单：logx#96、logx#97、logx#98、logx#99、logx#100、logx#101、logx#102、logx#103、logx#104、logx#105、logx#106。
+
 ## [v0.8.7] — 2026-11-08
 
 - feat: 导出 `ErrKey` 常量锁死错误字段名 "err"（两矩阵字段收敛锚点，oekit#161）——错误字段名从此有单一权威常量，消费方不再各写字符串字面量
