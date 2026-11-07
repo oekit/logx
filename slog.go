@@ -226,6 +226,21 @@ func (l *slogLogger) emitAt(ctx context.Context, level Level, msg string, pc uin
 			"marshalErr": err.Error(),
 			"rawKv":      fmt.Sprint(keysAndValues...),
 		}
+		// 降级不脱钩（#100）：关联字段一并带上——service/trace_id/caller 取自
+		// 上方已写入 record 的框架字段，WithAttrs 持久属性逐键平铺（值统一转
+		// 字符串）。一条 NaN 不该让整条日志失去可检索性：故障排查时最需要
+		// 的 trace/service 关联恰好不能丢。框架降级字段优先，用户同名键让位。
+		for _, k := range [...]string{"service", "trace_id", "caller"} {
+			if v, ok := record[k].(string); ok {
+				fallback[k] = v
+			}
+		}
+		for _, a := range l.Attrs {
+			k := groupPrefix + a.Key
+			if _, taken := fallback[k]; !taken {
+				fallback[k] = fmt.Sprintf("%v", logValue(a.Value))
+			}
+		}
 		buf, _ = json.Marshal(fallback) // 仅字符串字段，不会失败
 	}
 	// 换行并入同一次 Write（#65）：两次 Write 之间无原子性保证，并发下另一
