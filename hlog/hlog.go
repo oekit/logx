@@ -19,10 +19,22 @@ package hlog
 import (
 	"context"
 	"os"
+	"sync"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"github.com/oekit/logx"
 )
+
+// hlogMu 串行化 hlog 进程全局级别（hertz defaultLogger.level，普通 int
+// 字段，hertz 自述 not concurrent-safe）的写与读（#96）：「一个 goroutine
+// 运行期调级 + 另一个 goroutine 打日志」是生产常态，此前在 -race 下必报
+// data race，与 std/slog 后端（BaseLogger.Mu 保护）的并发安全口径分裂。
+//
+// 必须是**包级**锁：全局级别进程内唯一，With* 派生的兄弟实例若各持一把
+// per-instance 锁则互不互斥（假修复）；读锁允许并发日志互不阻塞，写锁
+// （SetLevel/initHlogLevel）只在换档瞬间排他。持锁区间只覆盖 hlog 调用
+// （内部走 hertz 默认输出路径），不回调 logx 自身代码，无重入死锁面。
+var hlogMu sync.RWMutex
 
 // hlogLogger 是基于 Hertz hlog 的 Logger 实现。
 type hlogLogger struct {
@@ -44,7 +56,10 @@ func NewHlogLogger(service string) logx.Logger {
 func (l *hlogLogger) IsHlogLogger() {}
 
 // initHlogLevel 根据实例级别设置 hlog 进程全局级别（hlog 无实例级级别）。
+// 写全局级别持写锁（#96）：构造新实例可能与其他 hlog 实例的并发日志竞态。
 func (l *hlogLogger) initHlogLevel() {
+	hlogMu.Lock()
+	defer hlogMu.Unlock()
 	switch l.Level {
 	case logx.LevelDebug:
 		hlog.SetLevel(hlog.LevelDebug)
@@ -89,10 +104,15 @@ func (l *hlogLogger) WithGroup(name string) logx.Logger {
 // SetLevel 设置实例级别，并同步 hlog 进程全局级别：hlog 输出受双层过滤
 // （实例 ShouldLog + hlog 全局 level），只改实例级时向下调级（排障常规
 // 操作）会被 hlog 全局 Info 静默吞掉。
+// 并发安全（#96）：写全局级别持包级写锁（hlogMu），与全部 Ctx* 打日志
+// 路径的读锁互斥——「运行期调级 + 并发打日志」此前在 -race 下必报
+// data race（hertz defaultLogger.level 是普通 int）。
 // ⚠️ hlog 全局级别进程内唯一：同进程多个 hlog 后端时最后 SetLevel 者生效
 // （hlog 设计如此，无法 per-logger）。
 func (l *hlogLogger) SetLevel(level logx.Level) {
 	l.BaseLogger.SetLevel(level)
+	hlogMu.Lock()
+	defer hlogMu.Unlock()
 	switch level {
 	case logx.LevelDebug:
 		hlog.SetLevel(hlog.LevelDebug)
@@ -179,6 +199,8 @@ func (l *hlogLogger) CtxDebug(ctx context.Context, msg string, keysAndValues ...
 		return
 	}
 	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
+	hlogMu.RLock()
+	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
 	traceID := logx.ExtractTrace(ctx)
 	if traceID != "" {
 		hlog.CtxDebugf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
@@ -192,6 +214,8 @@ func (l *hlogLogger) CtxInfo(ctx context.Context, msg string, keysAndValues ...a
 		return
 	}
 	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
+	hlogMu.RLock()
+	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
 	traceID := logx.ExtractTrace(ctx)
 	if traceID != "" {
 		hlog.CtxInfof(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
@@ -205,6 +229,8 @@ func (l *hlogLogger) CtxWarn(ctx context.Context, msg string, keysAndValues ...a
 		return
 	}
 	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
+	hlogMu.RLock()
+	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
 	traceID := logx.ExtractTrace(ctx)
 	if traceID != "" {
 		hlog.CtxWarnf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
@@ -218,6 +244,8 @@ func (l *hlogLogger) CtxError(ctx context.Context, msg string, keysAndValues ...
 		return
 	}
 	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
+	hlogMu.RLock()
+	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
 	traceID := logx.ExtractTrace(ctx)
 	if traceID != "" {
 		hlog.CtxErrorf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
@@ -238,6 +266,8 @@ func (l *hlogLogger) CtxDebugf(ctx context.Context, format string, args ...any) 
 		return
 	}
 	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
+	hlogMu.RLock()
+	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
 	if pfx := l.attrPrefix(); pfx != "" {
@@ -252,6 +282,8 @@ func (l *hlogLogger) CtxInfof(ctx context.Context, format string, args ...any) {
 		return
 	}
 	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
+	hlogMu.RLock()
+	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
 	if pfx := l.attrPrefix(); pfx != "" {
@@ -266,6 +298,8 @@ func (l *hlogLogger) CtxWarnf(ctx context.Context, format string, args ...any) {
 		return
 	}
 	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
+	hlogMu.RLock()
+	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
 	if pfx := l.attrPrefix(); pfx != "" {
@@ -280,6 +314,8 @@ func (l *hlogLogger) CtxErrorf(ctx context.Context, format string, args ...any) 
 		return
 	}
 	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
+	hlogMu.RLock()
+	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
 	if pfx := l.attrPrefix(); pfx != "" {
