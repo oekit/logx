@@ -1,8 +1,10 @@
 package logx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -62,18 +64,34 @@ func TestSlogGroup_ChainAccumulates(t *testing.T) {
 	}
 }
 
-// TestSlogGroup_HandlerPathChained 钉住 #83 handler 路径：注入 Handler 时
-// 组链按 slog 语义逐层应用到 handler（a.b），而非只留最后一层。
+// TestSlogGroup_HandlerPathChained 钉住 #83+#99 handler 路径：链式组以
+// slog.Group 嵌套表达（a 包 b 包用户字段），而非只留最后一层；框架字段
+// 不进组（#99：此前整体 h.WithGroup 把框架字段一并嵌进组）。
 func TestSlogGroup_HandlerPathChained(t *testing.T) {
-	h := newCaptureHandler()
-	NewSlogLogger("svc", WithHandler(h)).WithGroup("a").WithGroup("b").Info("m")
+	var buf bytes.Buffer
+	NewSlogLogger("svc", WithHandler(slog.NewJSONHandler(&buf, nil))).
+		WithGroup("a").WithGroup("b").Info("m", "k", 1)
 
-	recs := h.snapshot()
-	if len(recs) != 1 {
-		t.Fatalf("want 1 record, got %d", len(recs))
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatalf("输出不是合法 JSON: %v\n%s", err, buf.String())
 	}
-	if got := recs[0]["#group"]; got != "a.b" {
-		t.Errorf("handler group = %v, want a.b", got)
+	a, ok := rec["a"].(map[string]any)
+	if !ok {
+		t.Fatalf("a 组未落地: %v", rec)
+	}
+	b, ok := a["b"].(map[string]any)
+	if !ok {
+		t.Fatalf("a.b 嵌套组未落地（只留最后一层？）: %v", rec)
+	}
+	if b["k"] != float64(1) {
+		t.Errorf("a.b.k = %v: %v", b["k"], rec)
+	}
+	if rec["service"] != "svc" {
+		t.Errorf("框架字段 service 应在顶层: %v", rec)
+	}
+	if rec["msg"] != "m" {
+		t.Errorf("框架字段 message（slog JSONHandler 渲染为 msg）应在顶层: %v", rec)
 	}
 }
 
