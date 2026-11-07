@@ -13,6 +13,13 @@ type stdLogger struct {
 	BaseLogger
 }
 
+// stdWriter 是 std 后端的私有输出器（#78）：本文件自带毫秒级 ts 前缀，
+// 此前用包级 log.Printf——其默认 LstdFlags 会在行首再叠一个秒级时间戳
+// （实测输出 "2026/11/06 22:53:19 2026-11-06 22:53:19.569 [INFO] ..."，
+// 双时间戳且前者无毫秒）。私有 log.Logger 置 flags=0，输出目标仍为
+// os.Stderr（与包级 log 默认一致）。
+var stdWriter = log.New(os.Stderr, "", 0)
+
 // NewStdLogger 创建标准库实现的 Logger。
 // 无 level 参数时默认 LevelInfo（与文档及 NewSlogLogger 一致；
 // 原先误用 LevelDebug=iota 零值，见 #11）。
@@ -66,9 +73,9 @@ func (l *stdLogger) log(level Level, ctx context.Context, msg string, keysAndVal
 
 	kvStr := formatAttrsAndKV(l.Attrs, keysAndValues...)
 	if kvStr != "" {
-		log.Printf("%s %s %s", prefix, msg, kvStr)
+		stdWriter.Printf("%s %s %s", prefix, msg, kvStr)
 	} else {
-		log.Printf("%s %s", prefix, msg)
+		stdWriter.Printf("%s %s", prefix, msg)
 	}
 }
 
@@ -99,7 +106,15 @@ func (l *stdLogger) logf(level Level, ctx context.Context, format string, args .
 	}
 
 	msg := fmt.Sprintf(format, args...)
-	log.Printf("%s %s", prefix, msg)
+	// printf 路径同样携带持久属性（#77）：此前 logf 不合并 l.Attrs——同一
+	// logger 上 Info 带 request_id、Infof 不带，字段面按方法族分裂，依赖
+	// 持久属性做审计/追踪的调用方在 printf 路径静默丢字段。与结构化路径
+	// （formatAttrsAndKV）口径一致：属性拼在消息之后。
+	if attrStr := FormatAttrs(l.Attrs...); attrStr != "" {
+		stdWriter.Printf("%s %s %s", prefix, msg, attrStr)
+		return
+	}
+	stdWriter.Printf("%s %s", prefix, msg)
 }
 
 // 结构化风格方法（绑定 ctx 时自动提取 trace_id）
