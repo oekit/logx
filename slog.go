@@ -30,10 +30,18 @@ import (
 //	logx.SetDefault(logx.NewSlogLogger("my-service", logx.WithHandler(myHandler)))
 type slogLogger struct {
 	BaseLogger
-	group string
+	// groups 是 WithGroup 累积的命名空间栈（#83）：slog 语义里链式
+	// WithGroup("a").WithGroup("b") 是嵌套命名空间 a.b，此前单 string 槽位
+	// 静默只留最后一层。
+	groups []string
 	// handler 非 nil 时走消费方注入的 slog.Handler，由其负责格式与输出；
 	// nil 时走内置 JSON→stdout 路径。构造后不可变，clone 时原样携带。
 	handler slog.Handler
+	// groupedHandler 是 groups 链已应用到 handler 的缓存（#87）：派生时
+	// 构建一次，避免每条记录重放 WithGroup 链（slog.Handler.WithGroup 按
+	// 约定应返回缓存好的派生 handler，重放是纯浪费）。handler 为 nil 时
+	// 保持 nil。
+	groupedHandler slog.Handler
 }
 
 // SlogOption 是 NewSlogLogger 的函数选项。
@@ -85,8 +93,9 @@ func (l *slogLogger) clone() *slogLogger {
 			Attrs:   append([]Attr(nil), cp.Attrs...),
 			Ctx:     cp.Ctx,
 		},
-		group:   l.group,
-		handler: l.handler,
+		groups:         append([]string(nil), l.groups...),
+		handler:        l.handler,
+		groupedHandler: l.groupedHandler,
 	}
 }
 
@@ -108,26 +117,61 @@ func (l *slogLogger) WithAttrs(attrs ...Attr) Logger {
 	return c
 }
 
+// WithGroup 返回带字段命名空间的子 logger（#75 #83）。
+//
+// slog 语义：group 是结构化字段的命名空间，链式调用**累积嵌套**——
+// WithGroup("a").WithGroup("b") 后用户字段落在 "a.b." 前缀下（此前单槽位
+// 静默只留最后一层）。两条输出路径统一生效：
+//
+//   - 内置 JSON 路径：用户 Attr/kv 键加 "<g1>.<g2>." 前缀（与 SlogHandler
+//     桥接的 "group.key" 方案同一口径）；框架字段（time/level/message/
+//     service/trace_id/caller）不进组。
+//   - 注入 Handler 路径：派生时把组链应用到 handler（h.WithGroup），由
+//     Handler 决定嵌套结构（缓存于派生实例，不在每条记录上重放）。
+//
+// name 为空串时为 no-op（对齐 slog.Handler.WithGroup 语义）。
 func (l *slogLogger) WithGroup(name string) Logger {
 	c := l.clone()
-	c.group = name
+	if name == "" {
+		return c
+	}
+	c.groups = append(c.groups, name)
+	if c.handler != nil {
+		h := c.handler
+		if c.groupedHandler != nil {
+			h = c.groupedHandler
+		}
+		c.groupedHandler = h.WithGroup(name)
+	}
 	return c
 }
 
 // emit 是所有日志方法的统一入口。注入了 WithHandler 时交给该 Handler 输出；
 // 否则输出一行结构化 JSON 到 stdout。
 func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndValues ...any) {
+	l.emitAt(ctx, level, msg, 0, time.Time{}, keysAndValues...)
+}
+
+// emitAt 是统一输出入口（#84）：pc/ts 由桥接路径（SlogHandler 直通）传入
+// slog 侧已解析好的调用点与时间戳——此前 Handle 忽略 r.PC/r.Time 走栈回溯，
+// 第一个非 logx 帧是 stdlib log/slog.(*Logger).log，caller 恒错标到
+// log/slog/logger.go 源码行。pc==0 / ts.IsZero() 表示未提供，在输出时自行
+// 探测 caller、取当前时间（本地调用路径语义不变）。
+func (l *slogLogger) emitAt(ctx context.Context, level Level, msg string, pc uintptr, ts time.Time, keysAndValues ...any) {
 	if !l.ShouldLog(level) {
 		return
 	}
 
 	if l.handler != nil {
-		l.emitToHandler(ctx, level, msg, keysAndValues...)
+		l.emitToHandler(ctx, level, msg, pc, ts, keysAndValues...)
 		return
 	}
 
+	if ts.IsZero() {
+		ts = time.Now()
+	}
 	record := map[string]any{
-		"time":    time.Now().Format(time.RFC3339Nano),
+		"time":    ts.Format(time.RFC3339Nano),
 		"level":   LevelString(level),
 		"message": msg,
 	}
@@ -138,8 +182,14 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 		record["trace_id"] = traceID
 	}
 
-	// 捕获真实调用方位置（跳过 logx 内部帧）
-	if caller := callerOutsideLogx(); caller != "" {
+	// 捕获真实调用方位置（跳过 logx 内部帧）；桥接路径复用 slog 已解析的 PC
+	caller := ""
+	if pc != 0 {
+		caller = pcCaller(pc)
+	} else {
+		caller = callerOutsideLogx()
+	}
+	if caller != "" {
 		record["caller"] = caller
 	}
 
@@ -148,22 +198,28 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 	// WARN——此前 map 赋值让用户值静默覆盖框架字段（trace_id 被覆盖 = 追踪链断），
 	// 与 trace_handler 的「已有同名字段不重复注入」、handler 路径的「原样重复」
 	// 形成三口径分裂；统一成「框架字段不可覆盖 + 显式改名 + WARN 可观测」。
-	reserved := map[string]bool{
-		"time": true, "level": true, "message": true,
-		"service": true, "trace_id": true, "caller": true,
+	// 提为包级只读变量（#87）：每条记录重建 map 是热路径纯浪费。
+	reserved := reservedFields
+	// 用户字段命名空间前缀（#75 #83）：WithGroup 累积的组以 "<g1>.<g2>."
+	// 前缀施加到用户 Attr/kv 键——与 SlogHandler 桥接的 "group.key" 口径
+	// 一致；框架字段不进组。加前缀天然避开与框架字段的键冲突（"g.time"
+	// 不再撞 "time"，组即命名空间）。
+	groupPrefix := ""
+	if len(l.groups) > 0 {
+		groupPrefix = strings.Join(l.groups, ".") + "."
 	}
 	for _, a := range l.Attrs {
-		putRecordField(record, reserved, a.Key, logValue(a.Value))
+		putRecordField(record, reserved, groupPrefix+a.Key, logValue(a.Value))
 	}
 
 	// 本次调用的 kv 对
 	for i := 0; i+1 < len(keysAndValues); i += 2 {
 		key := fmt.Sprintf("%v", keysAndValues[i])
-		putRecordField(record, reserved, key, logValue(keysAndValues[i+1]))
+		putRecordField(record, reserved, groupPrefix+key, logValue(keysAndValues[i+1]))
 	}
 	if len(keysAndValues)%2 == 1 {
 		lastKey := fmt.Sprintf("%v", keysAndValues[len(keysAndValues)-1])
-		putRecordField(record, reserved, lastKey, "(MISSING)")
+		putRecordField(record, reserved, groupPrefix+lastKey, "(MISSING)")
 	}
 
 	buf, err := json.Marshal(record)
@@ -182,13 +238,54 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 	// goroutine 的记录体会插进本条与换行之间 ⇒ JSONL 拼行/空行，下游逐行解析
 	// 静默丢日志。对齐 log.Printf / log/slog JSONHandler 的整行单写纪律。
 	buf = append(buf, '\n')
-	os.Stdout.Write(buf)
+	writeStdout(buf)
+}
+
+// stdoutWriteFailures 累计内置 JSON 路径 stdout 写失败次数；stdoutFailReported
+// 保证降级 stderr 报告只发一次（#79）。
+var (
+	stdoutWriteFailures atomic.Uint64
+	stdoutFailReported  atomic.Bool
+)
+
+// StdoutWriteFailures 返回内置 JSON 路径 stdout 写失败的累计次数（#79）。
+//
+// 排障入口：服务「没日志了」时先看它——非零说明写端坏了（stdout 被重定向
+// 到已关闭管道、磁盘满等），而不是日志没产生。此前 os.Stdout.Write 的返回
+// error 被直接丢弃，与同函数注释「绝不静默丢弃整条日志」的承诺自相矛盾。
+func StdoutWriteFailures() uint64 {
+	return stdoutWriteFailures.Load()
+}
+
+// writeStdout 写一行日志到 stdout（#79）：失败时计数，并降级到 stderr 报告
+// **一次**（附被丢弃的日志行，便于定位写端故障）——只报一次避免每条失败
+// 都写 stderr 形成二次风暴；后续失败静默计入 StdoutWriteFailures 计数。
+func writeStdout(buf []byte) {
+	_, err := os.Stdout.Write(buf)
+	if err == nil {
+		return
+	}
+	stdoutWriteFailures.Add(1)
+	if stdoutFailReported.CompareAndSwap(false, true) {
+		fmt.Fprintf(os.Stderr,
+			"logx: 内置 JSON 路径 stdout 写失败（本报告仅一次，后续失败计入 StdoutWriteFailures）: %v; 丢弃日志: %.200s\n",
+			err, buf)
+	}
 }
 
 // emitToHandler 将日志经消费方注入的 slog.Handler 输出。字段口径与内置 JSON
 // 路径一致（service / trace_id / caller / Attr / kv），格式完全由 Handler 决定。
-func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string, keysAndValues ...any) {
+// bridgePC/bridgeTS 非 nil 时复用桥接侧已解析的调用点与时间戳（#84）。
+func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string, bridgePC uintptr, bridgeTS time.Time, keysAndValues ...any) {
 	pc, caller := realCallerOutsideLogx()
+	if bridgePC != 0 {
+		pc = bridgePC
+		caller = pcCaller(bridgePC)
+	}
+	ts := bridgeTS
+	if ts.IsZero() {
+		ts = time.Now()
+	}
 	attrs := make([]slog.Attr, 0, 4+len(l.Attrs)+len(keysAndValues)/2+1)
 	if l.Service != "" {
 		attrs = append(attrs, slog.String("service", l.Service))
@@ -212,12 +309,33 @@ func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string,
 	}
 
 	h := l.handler
-	if l.group != "" {
-		h = h.WithGroup(l.group)
+	if l.groupedHandler != nil {
+		// 组链已在派生时应用到 handler 并缓存（#87），每条记录不再重放。
+		h = l.groupedHandler
 	}
-	rec := slog.NewRecord(time.Now(), slogLevel(level), msg, pc)
+	rec := slog.NewRecord(ts, slogLevel(level), msg, pc)
 	rec.AddAttrs(attrs...)
 	_ = h.Handle(ctx, rec)
+}
+
+// logxBridge 是 slogBridgeSink 的实现（#84）：SlogHandler 桥接直通入口，
+// 复用 slog 侧已解析的调用点 PC 与时间戳，不再栈回溯。
+func (l *slogLogger) logxBridge(ctx context.Context, level Level, pc uintptr, ts time.Time, msg string, kv ...any) {
+	l.emitAt(ctx, level, msg, pc, ts, kv...)
+}
+
+// pcCaller 将单个 PC 解析为 "file:line"（与 realCallerOutsideLogx 的字符串
+// 口径一致）。桥接路径复用 slog 已解析好的调用点（r.PC）时使用。
+func pcCaller(pc uintptr) string {
+	if pc == 0 {
+		return ""
+	}
+	frames := runtime.CallersFrames([]uintptr{pc})
+	f, _ := frames.Next()
+	if f.File == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", filepath.Base(f.File), f.Line)
 }
 
 // slogLevel 将 logx.Level 映射为 log/slog.Level。
@@ -291,11 +409,16 @@ func mergeSkipFiles(old *[]string, add []string) *[]string {
 
 // callerOutsideLogx 从调用栈中找到第一个不属于日志内部帧的调用方。
 // 返回 "file:line" 格式，用于结构化日志的 caller 字段。
-// 内部帧包括：logx 包自身、SkipCallerFiles 注册的桥接适配器文件。
+// 内部帧包括：logx 包自身、stdlib log/slog 桥接内部帧、SkipCallerFiles
+// 注册的桥接适配器文件。
+//
+// 未命中（首个外部帧之前栈耗尽，或全部帧都是日志机制内部帧）时返回
+// 空串、caller 字段省略。探测为单遍全栈扫描，无帧数上限（#82）：
+// 深调用栈（多层中间件 + 包装 logger）不会静默丢 caller。
 //
 // 不缓存 skip 深度：不同调用路径的栈深不同（Logger 方法直调 vs 包级
 // logx.Info vs Delegating 包装），全局缓存会让先到的路径污染后到的，
-// 把 caller 错误归属到无关文件。探测循环上限 12 帧，成本可忽略。
+// 把 caller 错误归属到无关文件。
 func callerOutsideLogx() string {
 	_, caller := realCallerOutsideLogx()
 	return caller
@@ -304,34 +427,62 @@ func callerOutsideLogx() string {
 // realCallerOutsideLogx 返回真实调用方的 PC 与 "file:line"。
 // PC 供 slog.Record 使用（Handler 的 AddSource 依赖它），字符串供 JSON 路径的
 // caller 字段使用。判定规则同 callerOutsideLogx。
+//
+// 实现（#87）：一次 runtime.Callers + runtime.CallersFrames 单遍过滤——
+// 此前 skip=2..11 串行 runtime.Caller，每次调用独立 O(depth) 重走整栈，
+// 整体 O(k²)：深栈多层包装下探测成本与整条 json.Marshal 同量级
+// （实测 465-1515ns/op，随栈深恶化）。单遍后无 12 帧上限（#82）：
+// 栈深超过初始缓冲（64 帧）时扩容重取一次。
 func realCallerOutsideLogx() (uintptr, string) {
+	var buf [64]uintptr
+	n := runtime.Callers(3, buf[:])
+	pcs := buf[:n]
+	if n == len(buf) {
+		// 栈比初始缓冲深（深递归/多层包装，罕见）：扩容重取，保证不因
+		// 缓冲边界漏掉真实调用方帧（#82：此前上限 12 帧时静默丢 caller）。
+		grown := make([]uintptr, 4*len(buf))
+		if n2 := runtime.Callers(3, grown); n2 > 0 {
+			pcs = grown[:n2]
+		}
+	}
 	skipFiles := callerSkipFiles.Load()
-	for skip := 2; skip < 12; skip++ {
-		pc, file, line, ok := runtime.Caller(skip)
-		if !ok {
+	frames := runtime.CallersFrames(pcs)
+	for {
+		frame, more := frames.Next()
+		if frame.PC == 0 && frame.File == "" {
+			break // 帧耗尽仍未命中
+		}
+		if !frameInsideLogx(frame.Function, frame.File, skipFiles) {
+			return frame.PC, fmt.Sprintf("%s:%d", filepath.Base(frame.File), frame.Line)
+		}
+		if !more {
 			break
 		}
-		fn := runtime.FuncForPC(pc)
-		if fn == nil {
-			break
-		}
-		// 内部帧判定：按函数名里的 module 路径前缀匹配日志实现自身——
-		// 根包、hlog/hertzlog 子包、以及内/外测试包。internal/ 下的测试
-		// 探针（logxcallertest）不属于实现，必须穿透。改 module 路径时
-		// 必须同步这里。
-		if i := strings.Index(fn.Name(), "oekit/logx"); i >= 0 {
-			rest := fn.Name()[i+len("oekit/logx"):]
-			if rest == "" || rest[0] == '.' || rest[0] == '_' ||
-				strings.HasPrefix(rest, "/hlog") || strings.HasPrefix(rest, "/hertzlog") {
-				continue
-			}
-		}
-		if isSkipFile(skipFiles, file) {
-			continue
-		}
-		return pc, fmt.Sprintf("%s:%d", filepath.Base(file), line)
 	}
 	return 0, ""
+}
+
+// frameInsideLogx 判定一帧是否日志机制内部帧（探测时跳过）：
+//
+//   - logx 包自身：按函数名里的 module 路径前缀匹配——根包、hlog/hertzlog
+//     子包、以及内/外测试包。internal/ 下的测试探针（logxcallertest）
+//     不属于实现，必须穿透。改 module 路径时必须同步这里。
+//   - stdlib log/slog 内部帧（如 (*Logger).log，#84）：经 SlogHandler 桥接的
+//     包装链（Delegating/audit 等，未走 PC 直通）回溯时，这些帧不是业务
+//     调用方，不跳过会把 caller 恒错标到 log/slog/logger.go 源码行。
+//   - SkipCallerFiles 注册的桥接适配器文件。
+func frameInsideLogx(fnName, file string, skipFiles *[]string) bool {
+	if i := strings.Index(fnName, "oekit/logx"); i >= 0 {
+		rest := fnName[i+len("oekit/logx"):]
+		if rest == "" || rest[0] == '.' || rest[0] == '_' ||
+			strings.HasPrefix(rest, "/hlog") || strings.HasPrefix(rest, "/hertzlog") {
+			return true
+		}
+	}
+	if strings.HasPrefix(fnName, "log/slog.") {
+		return true
+	}
+	return isSkipFile(skipFiles, file)
 }
 
 func isSkipFile(skipFiles *[]string, file string) bool {
@@ -451,6 +602,13 @@ func (a auditLogger) WithGroup(name string) Logger {
 	return auditLogger{inner: a.inner.WithGroup(name)}
 }
 
+// Enabled 透传内部后端的级别判定——LevelEnabler 实现（#76）。
+// 此前 auditLogger 未实现该接口，logx.Enabled 恒 true，热路径守卫在
+// 最常用的审计包装器上失效。
+func (a auditLogger) Enabled(level Level) bool {
+	return Enabled(a.inner, level)
+}
+
 // 其余 Logger 方法委托 inner。
 func (a auditLogger) Debug(msg string, kv ...any) { a.inner.Debug(msg, kv...) }
 func (a auditLogger) Info(msg string, kv ...any)  { a.inner.Info(msg, kv...) }
@@ -486,6 +644,13 @@ func (a auditLogger) CtxWarnf(ctx context.Context, format string, args ...any) {
 }
 func (a auditLogger) CtxErrorf(ctx context.Context, format string, args ...any) {
 	a.inner.CtxErrorf(ctx, format, args...)
+}
+
+// reservedFields 是内置 JSON 路径的框架字段名集合（见 emit 内注释，#68/#87）。
+// 初始化后只读，并发访问安全。
+var reservedFields = map[string]bool{
+	"time": true, "level": true, "message": true,
+	"service": true, "trace_id": true, "caller": true,
 }
 
 // putRecordField 落一个字段进内置 JSON record（#68）：键与框架字段冲突时

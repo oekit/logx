@@ -213,6 +213,11 @@ func (l *hlogLogger) CtxError(ctx context.Context, msg string, keysAndValues ...
 }
 
 // 带 Context 的 printf 风格方法
+//
+// #86：printf 路径同样携带 WithAttrs 持久属性——此前 Ctx*f 不合并 attrPrefix，
+// 同一 logger 上 Info 带 request_id、Infof 不带，字段面按方法族分裂，
+// 违背 WithAttrs「拼入消息前缀」的 godoc 承诺。与 Ctx* 结构化路径
+// （formatKV）口径一致：属性拼在消息之后。
 
 func (l *hlogLogger) CtxDebugf(ctx context.Context, format string, args ...any) {
 	if !l.ShouldLog(logx.LevelDebug) {
@@ -220,6 +225,10 @@ func (l *hlogLogger) CtxDebugf(ctx context.Context, format string, args ...any) 
 	}
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
+	if pfx := l.attrPrefix(); pfx != "" {
+		hlog.CtxDebugf(ctx, "%s %s %s", l.Prefix(), msg, pfx)
+		return
+	}
 	hlog.CtxDebugf(ctx, "%s %s", l.Prefix(), msg)
 }
 
@@ -229,6 +238,10 @@ func (l *hlogLogger) CtxInfof(ctx context.Context, format string, args ...any) {
 	}
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
+	if pfx := l.attrPrefix(); pfx != "" {
+		hlog.CtxInfof(ctx, "%s %s %s", l.Prefix(), msg, pfx)
+		return
+	}
 	hlog.CtxInfof(ctx, "%s %s", l.Prefix(), msg)
 }
 
@@ -238,6 +251,10 @@ func (l *hlogLogger) CtxWarnf(ctx context.Context, format string, args ...any) {
 	}
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
+	if pfx := l.attrPrefix(); pfx != "" {
+		hlog.CtxWarnf(ctx, "%s %s %s", l.Prefix(), msg, pfx)
+		return
+	}
 	hlog.CtxWarnf(ctx, "%s %s", l.Prefix(), msg)
 }
 
@@ -247,5 +264,9 @@ func (l *hlogLogger) CtxErrorf(ctx context.Context, format string, args ...any) 
 	}
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
+	if pfx := l.attrPrefix(); pfx != "" {
+		hlog.CtxErrorf(ctx, "%s %s %s", l.Prefix(), msg, pfx)
+		return
+	}
 	hlog.CtxErrorf(ctx, "%s %s", l.Prefix(), msg)
 }

@@ -24,6 +24,10 @@ func captureStderr(t *testing.T) *bytes.Buffer {
 	prev := log.Writer()
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(prev) })
+	// std 后端经私有 log.Logger 输出（#78），需一并重定向
+	prevW := stdWriter.Writer()
+	stdWriter.SetOutput(&buf)
+	t.Cleanup(func() { stdWriter.SetOutput(prevW) })
 	return &buf
 }
 

@@ -5,7 +5,6 @@ package logx_test
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"testing"
@@ -187,27 +186,6 @@ func TestIsHlogBacked(t *testing.T) {
 	}
 }
 
-// —— 全局快捷方法（logger.go 委托段）经 std 后端落到标准库 log ——
-
-func TestGlobalShortcuts_RouteToDefault(t *testing.T) {
-	var buf strings.Builder
-	prevWriter := log.Writer()
-	log.SetOutput(writerFunc(func(p []byte) (int, error) { return buf.Write(p) }))
-	t.Cleanup(func() { log.SetOutput(prevWriter) })
-	setDefaultRestore(t, logx.NewStdLogger("shortcut-svc", logx.LevelDebug))
-
-	logx.WithService("svc-x").Error("shortcut")
-	logx.WithCtx(context.Background()).Warn("withctx")
-	logx.Debug("g-debug")
-	logx.Infof("g-info-fmt")
-	out := buf.String()
-	for _, want := range []string{"shortcut", "withctx", "g-debug", "g-info-fmt"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("输出缺 %q: %q", want, out)
-		}
-	}
-}
-
-type writerFunc func([]byte) (int, error)
-
-func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+// —— 全局快捷方法（logger.go 委托段）经 std 后端的输出捕获 ——
+// 见 std_printf_test.go 的 TestGlobalShortcuts_RouteToDefault（#78 后 std
+// 后端经私有 log.Logger 输出，捕获需访问包内 stdWriter，故移入内部测试包）。

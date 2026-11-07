@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"log"
 	"os"
 	"strings"
 	"testing"
@@ -249,8 +248,8 @@ func TestWithCtx_StdTraceInOutput(t *testing.T) {
 	defer restore()
 
 	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	defer log.SetOutput(os.Stderr)
+	stdWriter.SetOutput(&buf) // #78：std 后端经私有 log.Logger 输出
+	defer stdWriter.SetOutput(os.Stderr)
 
 	ctx := withTestTrace(context.Background(), "trace-xyz")
 	logger := NewStdLogger("svc", LevelDebug).WithCtx(ctx)
@@ -271,8 +270,8 @@ func TestWithCtx_StdNoTraceWithoutBinding(t *testing.T) {
 	defer restore()
 
 	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	defer log.SetOutput(os.Stderr)
+	stdWriter.SetOutput(&buf) // #78：std 后端经私有 log.Logger 输出
+	defer stdWriter.SetOutput(os.Stderr)
 
 	NewStdLogger("svc", LevelDebug).Info("no-ctx")
 	if strings.Contains(buf.String(), "[trace=") {
@@ -305,8 +304,8 @@ func TestWithCtx_ExplicitCtxWins(t *testing.T) {
 	defer restore()
 
 	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	defer log.SetOutput(os.Stderr)
+	stdWriter.SetOutput(&buf) // #78：std 后端经私有 log.Logger 输出
+	defer stdWriter.SetOutput(os.Stderr)
 
 	boundCtx := withTestTrace(context.Background(), "bound-trace")
 	explicitCtx := withTestTrace(context.Background(), "explicit-trace")

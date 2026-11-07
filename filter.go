@@ -3,6 +3,8 @@ package logx
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync/atomic"
 )
 
 // FilterOption 配置 WithFilter 的过滤行为。
@@ -15,8 +17,15 @@ type filterConfig struct {
 	drop func(msg string, kvs []any) bool
 }
 
-// FilterKey 把命中 key 的 kv 值替换为 "***"（精确匹配键名，含点路径字面量，
-// 如 "user.password"）。
+// FilterKey 把命中 key 的 kv 值替换为 "***"。键名匹配大小写不敏感（#85，
+// EqualFold：HTTP 头的规范键名是 Authorization/X-Api-Key，安全控制不应要求
+// 消费方逐大小写枚举——此前配置 FilterKey("authorization") 时 "Authorization"
+// 键的值原样落盘），含点路径字面量，如 "user.password"；非 string 键先按
+// %v 归一成键名再比对（与后端 emit 侧的键口径一致——emit 侧会
+// fmt.Sprintf("%v") 稳定成键，此前非 string 键完全不可脱敏）。
+//
+// 注意：FilterKey 只作用于 kv/Attr 的**值**；printf 路径无键名，不脱敏
+// （见 WithFilter 的警告，#80）。
 func FilterKey(keys ...string) FilterOption {
 	return func(c *filterConfig) {
 		if c.keys == nil {
@@ -26,6 +35,17 @@ func FilterKey(keys ...string) FilterOption {
 			c.keys[k] = struct{}{}
 		}
 	}
+}
+
+// matchKey 判定键名是否命中过滤键（#85）：大小写不敏感。键集通常只有
+// 个位数条目，线性 EqualFold 比下小写归一的 map 查找省一次分配。
+func (c *filterConfig) matchKey(key string) bool {
+	for k := range c.keys {
+		if strings.EqualFold(k, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // FilterFunc 命中即丢弃整条记录（在脱敏之后评估）。
@@ -40,6 +60,11 @@ func FilterFunc(fn func(msg string, kvs []any) bool) FilterOption {
 // 相同过滤规则。典型用法（防止敏感信息进日志）：
 //
 //	l := logx.WithFilter(logx.Default(), logx.FilterKey("password", "token"))
+//
+// ⚠️ printf 路径（Debugf/Infof/... 与 Ctx*f）**不做 FilterKey 脱敏**，只做
+// FilterFunc 丢弃评估（#80）：printf 参数只有格式化值、没有键名，脱敏无从
+// 匹配——格式化串里的 password/token 会原样落盘。敏感数据一律走 kv
+// 结构化风格（Info("login", "password", pw)），禁止经 printf 格式化输出。
 func WithFilter(l Logger, opts ...FilterOption) Logger {
 	if l == nil {
 		panic("logx: WithFilter called with nil logger")
@@ -54,6 +79,20 @@ func WithFilter(l Logger, opts ...FilterOption) Logger {
 type filterLogger struct {
 	base Logger
 	cfg  *filterConfig
+	// levelOverride 是实例级级别下限（#81）：SetLevel 写入这里，不透传共享的
+	// base——此前 filterLogger.SetLevel 直接改 base（base 可能是全局默认
+	// logger 或父 logger），级别调整半径远大于「子 logger 独立配置」的直觉。
+	// 存 Level+1（0 表示未设置，区分未设置与 LevelDebug 零值）。
+	levelOverride atomic.Int32
+}
+
+// pass 实例级下限预检：已设置下限且事件级别低于下限时提前丢弃
+// （base 自身的级别过滤仍生效，有效级别取两者更严者）。
+func (f *filterLogger) pass(level Level) bool {
+	if v := f.levelOverride.Load(); v != 0 && Level(v-1) > level {
+		return false
+	}
+	return true
 }
 
 // filterKvs 返回脱敏后的 kv 切片（不入参原切片）。
@@ -64,10 +103,10 @@ func (f *filterLogger) filterKvs(kvs []any) []any {
 	out := make([]any, len(kvs))
 	copy(out, kvs)
 	for i := 0; i+1 < len(out); i += 2 {
-		if k, ok := out[i].(string); ok {
-			if _, hit := f.cfg.keys[k]; hit {
-				out[i+1] = "***"
-			}
+		// #85：键统一按 %v 归一（非 string 键与 emit 侧键口径一致），
+		// 命中判定大小写不敏感。
+		if f.cfg.matchKey(fmt.Sprintf("%v", out[i])) {
+			out[i+1] = "***"
 		}
 	}
 	return out
@@ -78,7 +117,13 @@ func (f *filterLogger) dropped(msg string, kvs []any) bool {
 	return f.cfg.drop != nil && f.cfg.drop(msg, kvs)
 }
 
+// 四组日志方法前置实例级下限预检（#81）：SetLevel 记录在 wrapper 自身，
+// 低于下限的事件在脱敏/丢弃评估之前提前丢弃。
+
 func (f *filterLogger) Debug(msg string, kvs ...any) {
+	if !f.pass(LevelDebug) {
+		return
+	}
 	kvs = f.filterKvs(kvs)
 	if f.dropped(msg, kvs) {
 		return
@@ -87,6 +132,9 @@ func (f *filterLogger) Debug(msg string, kvs ...any) {
 }
 
 func (f *filterLogger) Info(msg string, kvs ...any) {
+	if !f.pass(LevelInfo) {
+		return
+	}
 	kvs = f.filterKvs(kvs)
 	if f.dropped(msg, kvs) {
 		return
@@ -95,6 +143,9 @@ func (f *filterLogger) Info(msg string, kvs ...any) {
 }
 
 func (f *filterLogger) Warn(msg string, kvs ...any) {
+	if !f.pass(LevelWarn) {
+		return
+	}
 	kvs = f.filterKvs(kvs)
 	if f.dropped(msg, kvs) {
 		return
@@ -103,6 +154,9 @@ func (f *filterLogger) Warn(msg string, kvs ...any) {
 }
 
 func (f *filterLogger) Error(msg string, kvs ...any) {
+	if !f.pass(LevelError) {
+		return
+	}
 	kvs = f.filterKvs(kvs)
 	if f.dropped(msg, kvs) {
 		return
@@ -111,6 +165,9 @@ func (f *filterLogger) Error(msg string, kvs ...any) {
 }
 
 func (f *filterLogger) Debugf(format string, args ...any) {
+	if !f.pass(LevelDebug) {
+		return
+	}
 	if f.dropped(fmt.Sprintf(format, args...), nil) {
 		return
 	}
@@ -118,6 +175,9 @@ func (f *filterLogger) Debugf(format string, args ...any) {
 }
 
 func (f *filterLogger) Infof(format string, args ...any) {
+	if !f.pass(LevelInfo) {
+		return
+	}
 	if f.dropped(fmt.Sprintf(format, args...), nil) {
 		return
 	}
@@ -125,6 +185,9 @@ func (f *filterLogger) Infof(format string, args ...any) {
 }
 
 func (f *filterLogger) Warnf(format string, args ...any) {
+	if !f.pass(LevelWarn) {
+		return
+	}
 	if f.dropped(fmt.Sprintf(format, args...), nil) {
 		return
 	}
@@ -132,6 +195,9 @@ func (f *filterLogger) Warnf(format string, args ...any) {
 }
 
 func (f *filterLogger) Errorf(format string, args ...any) {
+	if !f.pass(LevelError) {
+		return
+	}
 	if f.dropped(fmt.Sprintf(format, args...), nil) {
 		return
 	}
@@ -139,6 +205,9 @@ func (f *filterLogger) Errorf(format string, args ...any) {
 }
 
 func (f *filterLogger) CtxDebug(ctx context.Context, msg string, kvs ...any) {
+	if !f.pass(LevelDebug) {
+		return
+	}
 	kvs = f.filterKvs(kvs)
 	if f.dropped(msg, kvs) {
 		return
@@ -147,6 +216,9 @@ func (f *filterLogger) CtxDebug(ctx context.Context, msg string, kvs ...any) {
 }
 
 func (f *filterLogger) CtxInfo(ctx context.Context, msg string, kvs ...any) {
+	if !f.pass(LevelInfo) {
+		return
+	}
 	kvs = f.filterKvs(kvs)
 	if f.dropped(msg, kvs) {
 		return
@@ -155,6 +227,9 @@ func (f *filterLogger) CtxInfo(ctx context.Context, msg string, kvs ...any) {
 }
 
 func (f *filterLogger) CtxWarn(ctx context.Context, msg string, kvs ...any) {
+	if !f.pass(LevelWarn) {
+		return
+	}
 	kvs = f.filterKvs(kvs)
 	if f.dropped(msg, kvs) {
 		return
@@ -163,6 +238,9 @@ func (f *filterLogger) CtxWarn(ctx context.Context, msg string, kvs ...any) {
 }
 
 func (f *filterLogger) CtxError(ctx context.Context, msg string, kvs ...any) {
+	if !f.pass(LevelError) {
+		return
+	}
 	kvs = f.filterKvs(kvs)
 	if f.dropped(msg, kvs) {
 		return
@@ -171,6 +249,9 @@ func (f *filterLogger) CtxError(ctx context.Context, msg string, kvs ...any) {
 }
 
 func (f *filterLogger) CtxDebugf(ctx context.Context, format string, args ...any) {
+	if !f.pass(LevelDebug) {
+		return
+	}
 	if f.dropped(fmt.Sprintf(format, args...), nil) {
 		return
 	}
@@ -178,6 +259,9 @@ func (f *filterLogger) CtxDebugf(ctx context.Context, format string, args ...any
 }
 
 func (f *filterLogger) CtxInfof(ctx context.Context, format string, args ...any) {
+	if !f.pass(LevelInfo) {
+		return
+	}
 	if f.dropped(fmt.Sprintf(format, args...), nil) {
 		return
 	}
@@ -185,6 +269,9 @@ func (f *filterLogger) CtxInfof(ctx context.Context, format string, args ...any)
 }
 
 func (f *filterLogger) CtxWarnf(ctx context.Context, format string, args ...any) {
+	if !f.pass(LevelWarn) {
+		return
+	}
 	if f.dropped(fmt.Sprintf(format, args...), nil) {
 		return
 	}
@@ -192,6 +279,9 @@ func (f *filterLogger) CtxWarnf(ctx context.Context, format string, args ...any)
 }
 
 func (f *filterLogger) CtxErrorf(ctx context.Context, format string, args ...any) {
+	if !f.pass(LevelError) {
+		return
+	}
 	if f.dropped(fmt.Sprintf(format, args...), nil) {
 		return
 	}
@@ -225,8 +315,9 @@ func (f *filterLogger) maskAttrs(attrs []Attr) []Attr {
 	}
 	out := make([]Attr, len(attrs))
 	copy(out, attrs)
+	// #85：键匹配大小写不敏感，与 filterKvs 同一口径。
 	for i := range out {
-		if _, hit := f.cfg.keys[out[i].Key]; hit {
+		if f.cfg.matchKey(out[i].Key) {
 			out[i].Value = "***"
 		}
 	}
@@ -237,4 +328,24 @@ func (f *filterLogger) WithGroup(name string) Logger {
 	return &filterLogger{base: f.base.WithGroup(name), cfg: f.cfg}
 }
 
-func (f *filterLogger) SetLevel(level Level) { f.base.SetLevel(level) }
+// Enabled 判定脱敏后端是否输出该级别——LevelEnabler 实现（#76）。
+// 此前 filterLogger 未实现该接口，logx.Enabled 走类型断言失败分支恒
+// true：被级别过滤掉的事件仍付出全部序列化/脱敏成本，热路径守卫失效。
+// 实例级下限（#81）同样参与判定。
+func (f *filterLogger) Enabled(level Level) bool {
+	if !f.pass(level) {
+		return false
+	}
+	return Enabled(f.base, level)
+}
+
+// SetLevel 实例级调级（#81）：下限记录在本 wrapper 上，**不再透传共享的
+// base**——此前直接 base.SetLevel(level)，而 base 可能是全局默认 logger 或
+// 父 logger：WithFilter 包一层后调 SetLevel 会改掉整棵树的级别，多组件
+// 各自调级互相覆盖。
+//
+// 边界（与 Delegating.SetLevel 同一声明）：本下限与 base 自身级别取更严者
+// 生效——wrapper 只能收紧，不能放宽（base 自己的 ShouldLog 仍拦截）。
+func (f *filterLogger) SetLevel(level Level) {
+	f.levelOverride.Store(int32(level) + 1)
+}

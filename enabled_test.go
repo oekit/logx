@@ -91,3 +91,27 @@ func TestEnabled_WithServiceSubLoggerKeepsEnabler(t *testing.T) {
 		t.Error("WithService 子 logger 应保留 Enabled 能力")
 	}
 }
+
+// TestEnabled_FilterLoggerHonorsLevel 钉住 #76：filterLogger 必须实现
+// LevelEnabler——此前未实现，logx.Enabled 恒 true（实测底层 LevelError 时
+// Enabled(Debug) 仍 true），被过滤事件仍付出全部序列化/脱敏成本。
+func TestEnabled_FilterLoggerHonorsLevel(t *testing.T) {
+	l := WithFilter(NewStdLogger("enabled-filter", LevelError), FilterKey("password"))
+	if Enabled(l, LevelDebug) != false {
+		t.Error("filterLogger 应透传底层级别判定（Debug 被过滤）")
+	}
+	if Enabled(l, LevelError) != true {
+		t.Error("filterLogger 应透传底层级别判定（Error 放行）")
+	}
+}
+
+// TestEnabled_AuditLoggerHonorsLevel 钉住 #76 的审计包装器面。
+func TestEnabled_AuditLoggerHonorsLevel(t *testing.T) {
+	l := NewAuditLogger("enabled-audit", WithHandler(newCaptureHandler()), WithLevel(LevelWarn))
+	if Enabled(l, LevelDebug) != false {
+		t.Error("auditLogger 应透传内部级别判定（Debug 被过滤）")
+	}
+	if Enabled(l, LevelWarn) != true {
+		t.Error("auditLogger 应透传内部级别判定（Warn 放行）")
+	}
+}
