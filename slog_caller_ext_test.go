@@ -28,6 +28,24 @@ func TestSlogHandler_WrappedChainCaller(t *testing.T) {
 	}
 }
 
+// TestCaller_DeepWrapperChain 钉住 #82：caller 探测不得有帧数上限——
+// emit 与真实调用方之间隔 15 层包装（每层 WithFilter 转发一帧，全部是
+// logx 内部帧）时，caller 仍归属真实调用方。此前探测循环上限 12 帧，
+// 超限静默返回 ""（caller 字段消失，消费方无从判断原因）。
+func TestCaller_DeepWrapperChain(t *testing.T) {
+	l := logx.Logger(logx.NewSlogLogger("svc"))
+	for i := 0; i < 15; i++ {
+		l = logx.WithFilter(l)
+	}
+	caller := logxcallertest.EmitCallerWith(l)
+	if caller == "" {
+		t.Fatal("深包装链下 caller 丢失（探测帧数上限回归）")
+	}
+	if !strings.Contains(caller, "caller_probe.go") {
+		t.Fatalf("caller 应归属探针调用点: %s", caller)
+	}
+}
+
 func TestSkipCallerFiles_EndToEnd(t *testing.T) {
 	probeFile := logxcallertest.File()
 

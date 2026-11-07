@@ -198,10 +198,8 @@ func (l *slogLogger) emitAt(ctx context.Context, level Level, msg string, pc uin
 	// WARN——此前 map 赋值让用户值静默覆盖框架字段（trace_id 被覆盖 = 追踪链断），
 	// 与 trace_handler 的「已有同名字段不重复注入」、handler 路径的「原样重复」
 	// 形成三口径分裂；统一成「框架字段不可覆盖 + 显式改名 + WARN 可观测」。
-	reserved := map[string]bool{
-		"time": true, "level": true, "message": true,
-		"service": true, "trace_id": true, "caller": true,
-	}
+	// 提为包级只读变量（#87）：每条记录重建 map 是热路径纯浪费。
+	reserved := reservedFields
 	// 用户字段命名空间前缀（#75 #83）：WithGroup 累积的组以 "<g1>.<g2>."
 	// 前缀施加到用户 Attr/kv 键——与 SlogHandler 桥接的 "group.key" 口径
 	// 一致；框架字段不进组。加前缀天然避开与框架字段的键冲突（"g.time"
@@ -379,11 +377,16 @@ func mergeSkipFiles(old *[]string, add []string) *[]string {
 
 // callerOutsideLogx 从调用栈中找到第一个不属于日志内部帧的调用方。
 // 返回 "file:line" 格式，用于结构化日志的 caller 字段。
-// 内部帧包括：logx 包自身、SkipCallerFiles 注册的桥接适配器文件。
+// 内部帧包括：logx 包自身、stdlib log/slog 桥接内部帧、SkipCallerFiles
+// 注册的桥接适配器文件。
+//
+// 未命中（首个外部帧之前栈耗尽，或全部帧都是日志机制内部帧）时返回
+// 空串、caller 字段省略。探测为单遍全栈扫描，无帧数上限（#82）：
+// 深调用栈（多层中间件 + 包装 logger）不会静默丢 caller。
 //
 // 不缓存 skip 深度：不同调用路径的栈深不同（Logger 方法直调 vs 包级
 // logx.Info vs Delegating 包装），全局缓存会让先到的路径污染后到的，
-// 把 caller 错误归属到无关文件。探测循环上限 12 帧，成本可忽略。
+// 把 caller 错误归属到无关文件。
 func callerOutsideLogx() string {
 	_, caller := realCallerOutsideLogx()
 	return caller
@@ -392,41 +395,62 @@ func callerOutsideLogx() string {
 // realCallerOutsideLogx 返回真实调用方的 PC 与 "file:line"。
 // PC 供 slog.Record 使用（Handler 的 AddSource 依赖它），字符串供 JSON 路径的
 // caller 字段使用。判定规则同 callerOutsideLogx。
+//
+// 实现（#87）：一次 runtime.Callers + runtime.CallersFrames 单遍过滤——
+// 此前 skip=2..11 串行 runtime.Caller，每次调用独立 O(depth) 重走整栈，
+// 整体 O(k²)：深栈多层包装下探测成本与整条 json.Marshal 同量级
+// （实测 465-1515ns/op，随栈深恶化）。单遍后无 12 帧上限（#82）：
+// 栈深超过初始缓冲（64 帧）时扩容重取一次。
 func realCallerOutsideLogx() (uintptr, string) {
+	var buf [64]uintptr
+	n := runtime.Callers(3, buf[:])
+	pcs := buf[:n]
+	if n == len(buf) {
+		// 栈比初始缓冲深（深递归/多层包装，罕见）：扩容重取，保证不因
+		// 缓冲边界漏掉真实调用方帧（#82：此前上限 12 帧时静默丢 caller）。
+		grown := make([]uintptr, 4*len(buf))
+		if n2 := runtime.Callers(3, grown); n2 > 0 {
+			pcs = grown[:n2]
+		}
+	}
 	skipFiles := callerSkipFiles.Load()
-	for skip := 2; skip < 12; skip++ {
-		pc, file, line, ok := runtime.Caller(skip)
-		if !ok {
+	frames := runtime.CallersFrames(pcs)
+	for {
+		frame, more := frames.Next()
+		if frame.PC == 0 && frame.File == "" {
+			break // 帧耗尽仍未命中
+		}
+		if !frameInsideLogx(frame.Function, frame.File, skipFiles) {
+			return frame.PC, fmt.Sprintf("%s:%d", filepath.Base(frame.File), frame.Line)
+		}
+		if !more {
 			break
 		}
-		fn := runtime.FuncForPC(pc)
-		if fn == nil {
-			break
-		}
-		// 内部帧判定：按函数名里的 module 路径前缀匹配日志实现自身——
-		// 根包、hlog/hertzlog 子包、以及内/外测试包。internal/ 下的测试
-		// 探针（logxcallertest）不属于实现，必须穿透。改 module 路径时
-		// 必须同步这里。
-		if i := strings.Index(fn.Name(), "oekit/logx"); i >= 0 {
-			rest := fn.Name()[i+len("oekit/logx"):]
-			if rest == "" || rest[0] == '.' || rest[0] == '_' ||
-				strings.HasPrefix(rest, "/hlog") || strings.HasPrefix(rest, "/hertzlog") {
-				continue
-			}
-		}
-		// stdlib log/slog 的内部帧（如 (*Logger).log）同属日志机制而非业务
-		// 调用方（#84）：经 SlogHandler 桥接的包装链（Delegating/audit 等，
-		// 未走 PC 直通）回溯时，这些帧会被当作第一个外部帧，caller 恒错标
-		// 到 log/slog/logger.go 的 stdlib 源码行。
-		if strings.HasPrefix(fn.Name(), "log/slog.") {
-			continue
-		}
-		if isSkipFile(skipFiles, file) {
-			continue
-		}
-		return pc, fmt.Sprintf("%s:%d", filepath.Base(file), line)
 	}
 	return 0, ""
+}
+
+// frameInsideLogx 判定一帧是否日志机制内部帧（探测时跳过）：
+//
+//   - logx 包自身：按函数名里的 module 路径前缀匹配——根包、hlog/hertzlog
+//     子包、以及内/外测试包。internal/ 下的测试探针（logxcallertest）
+//     不属于实现，必须穿透。改 module 路径时必须同步这里。
+//   - stdlib log/slog 内部帧（如 (*Logger).log，#84）：经 SlogHandler 桥接的
+//     包装链（Delegating/audit 等，未走 PC 直通）回溯时，这些帧不是业务
+//     调用方，不跳过会把 caller 恒错标到 log/slog/logger.go 源码行。
+//   - SkipCallerFiles 注册的桥接适配器文件。
+func frameInsideLogx(fnName, file string, skipFiles *[]string) bool {
+	if i := strings.Index(fnName, "oekit/logx"); i >= 0 {
+		rest := fnName[i+len("oekit/logx"):]
+		if rest == "" || rest[0] == '.' || rest[0] == '_' ||
+			strings.HasPrefix(rest, "/hlog") || strings.HasPrefix(rest, "/hertzlog") {
+			return true
+		}
+	}
+	if strings.HasPrefix(fnName, "log/slog.") {
+		return true
+	}
+	return isSkipFile(skipFiles, file)
 }
 
 func isSkipFile(skipFiles *[]string, file string) bool {
@@ -581,6 +605,13 @@ func (a auditLogger) CtxWarnf(ctx context.Context, format string, args ...any) {
 }
 func (a auditLogger) CtxErrorf(ctx context.Context, format string, args ...any) {
 	a.inner.CtxErrorf(ctx, format, args...)
+}
+
+// reservedFields 是内置 JSON 路径的框架字段名集合（见 emit 内注释，#68/#87）。
+// 初始化后只读，并发访问安全。
+var reservedFields = map[string]bool{
+	"time": true, "level": true, "message": true,
+	"service": true, "trace_id": true, "caller": true,
 }
 
 // putRecordField 落一个字段进内置 JSON record（#68）：键与框架字段冲突时
