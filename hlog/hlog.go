@@ -105,6 +105,16 @@ func (l *hlogLogger) SetLevel(level logx.Level) {
 	}
 }
 
+// orBackground 统一 Ctx* 入口的 nil ctx 兜底（#97，对齐 logx 侧
+// EffectiveCtx/ctxOrBackground 口径）：注册提取器后 nil ctx 透传给
+// ExtractTrace/hlog 会 nil 解引用 panic。
+func orBackground(ctx context.Context) context.Context {
+	if ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
+
 // attrPrefix 将持久化属性格式化为可读前缀。
 func (l *hlogLogger) attrPrefix() string {
 	if len(l.Attrs) == 0 {
@@ -168,6 +178,7 @@ func (l *hlogLogger) CtxDebug(ctx context.Context, msg string, keysAndValues ...
 	if !l.ShouldLog(logx.LevelDebug) {
 		return
 	}
+	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
 	traceID := logx.ExtractTrace(ctx)
 	if traceID != "" {
 		hlog.CtxDebugf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
@@ -180,6 +191,7 @@ func (l *hlogLogger) CtxInfo(ctx context.Context, msg string, keysAndValues ...a
 	if !l.ShouldLog(logx.LevelInfo) {
 		return
 	}
+	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
 	traceID := logx.ExtractTrace(ctx)
 	if traceID != "" {
 		hlog.CtxInfof(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
@@ -192,6 +204,7 @@ func (l *hlogLogger) CtxWarn(ctx context.Context, msg string, keysAndValues ...a
 	if !l.ShouldLog(logx.LevelWarn) {
 		return
 	}
+	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
 	traceID := logx.ExtractTrace(ctx)
 	if traceID != "" {
 		hlog.CtxWarnf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
@@ -204,6 +217,7 @@ func (l *hlogLogger) CtxError(ctx context.Context, msg string, keysAndValues ...
 	if !l.ShouldLog(logx.LevelError) {
 		return
 	}
+	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
 	traceID := logx.ExtractTrace(ctx)
 	if traceID != "" {
 		hlog.CtxErrorf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
@@ -223,6 +237,7 @@ func (l *hlogLogger) CtxDebugf(ctx context.Context, format string, args ...any) 
 	if !l.ShouldLog(logx.LevelDebug) {
 		return
 	}
+	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
 	if pfx := l.attrPrefix(); pfx != "" {
@@ -236,6 +251,7 @@ func (l *hlogLogger) CtxInfof(ctx context.Context, format string, args ...any) {
 	if !l.ShouldLog(logx.LevelInfo) {
 		return
 	}
+	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
 	if pfx := l.attrPrefix(); pfx != "" {
@@ -249,6 +265,7 @@ func (l *hlogLogger) CtxWarnf(ctx context.Context, format string, args ...any) {
 	if !l.ShouldLog(logx.LevelWarn) {
 		return
 	}
+	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
 	if pfx := l.attrPrefix(); pfx != "" {
@@ -262,6 +279,7 @@ func (l *hlogLogger) CtxErrorf(ctx context.Context, format string, args ...any) 
 	if !l.ShouldLog(logx.LevelError) {
 		return
 	}
+	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
 	traceID := logx.ExtractTrace(ctx)
 	msg := logx.FormatWithTraceID(traceID, format, args...)
 	if pfx := l.attrPrefix(); pfx != "" {

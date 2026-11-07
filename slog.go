@@ -158,6 +158,7 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 // log/slog/logger.go 源码行。pc==0 / ts.IsZero() 表示未提供，在输出时自行
 // 探测 caller、取当前时间（本地调用路径语义不变）。
 func (l *slogLogger) emitAt(ctx context.Context, level Level, msg string, pc uintptr, ts time.Time, keysAndValues ...any) {
+	ctx = ctxOrBackground(ctx) // #97：Ctx* 入参 nil ctx 统一兜底（ExtractTrace 与注入 Handler 都不再收到 nil）
 	if !l.ShouldLog(level) {
 		return
 	}
