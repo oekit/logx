@@ -82,8 +82,20 @@ type filterLogger struct {
 	// levelOverride 是实例级级别下限（#81）：SetLevel 写入这里，不透传共享的
 	// base——此前 filterLogger.SetLevel 直接改 base（base 可能是全局默认
 	// logger 或父 logger），级别调整半径远大于「子 logger 独立配置」的直觉。
+	// With* 派生时把当前下限值拷贝给子实例（#101：继承派生时刻的下限、
+	// 派生后各自独立——与 std/slog/hlog 后端 clone 拷 Level 对齐；此前
+	// 派生归零，父实例收紧后子 logger 静默回默认档）。
 	// 存 Level+1（0 表示未设置，区分未设置与 LevelDebug 零值）。
 	levelOverride atomic.Int32
+}
+
+// derive 派生子 logger 时继承父实例的级别下限（#101）：拷贝当前值，
+// 派生后父子各自独立（后端 clone 拷 Level 同语义）。
+func (f *filterLogger) derive(child *filterLogger) *filterLogger {
+	if v := f.levelOverride.Load(); v != 0 {
+		child.levelOverride.Store(v)
+	}
+	return child
 }
 
 // pass 实例级下限预检：已设置下限且事件级别低于下限时提前丢弃
@@ -288,18 +300,19 @@ func (f *filterLogger) CtxErrorf(ctx context.Context, format string, args ...any
 	f.base.CtxErrorf(ctx, format, args...)
 }
 
-// Builder 方法：派生子 logger 保持过滤规则。
+// Builder 方法：派生子 logger 保持过滤规则，并继承派生时刻的实例级
+// 级别下限（#101，派生后独立调级）。
 
 func (f *filterLogger) WithCtx(ctx context.Context) Logger {
-	return &filterLogger{base: f.base.WithCtx(ctx), cfg: f.cfg}
+	return f.derive(&filterLogger{base: f.base.WithCtx(ctx), cfg: f.cfg})
 }
 
 func (f *filterLogger) WithService(name string) Logger {
-	return &filterLogger{base: f.base.WithService(name), cfg: f.cfg}
+	return f.derive(&filterLogger{base: f.base.WithService(name), cfg: f.cfg})
 }
 
 func (f *filterLogger) WithAttrs(attrs ...Attr) Logger {
-	return &filterLogger{base: f.base.WithAttrs(f.maskAttrs(attrs)...), cfg: f.cfg}
+	return f.derive(&filterLogger{base: f.base.WithAttrs(f.maskAttrs(attrs)...), cfg: f.cfg})
 }
 
 // maskAttrs 把命中过滤键的属性值替换为 "***"（脱敏后再交给 base）。
@@ -325,7 +338,7 @@ func (f *filterLogger) maskAttrs(attrs []Attr) []Attr {
 }
 
 func (f *filterLogger) WithGroup(name string) Logger {
-	return &filterLogger{base: f.base.WithGroup(name), cfg: f.cfg}
+	return f.derive(&filterLogger{base: f.base.WithGroup(name), cfg: f.cfg})
 }
 
 // Enabled 判定脱敏后端是否输出该级别——LevelEnabler 实现（#76）。
