@@ -71,6 +71,7 @@ func (l *stdLogger) WithGroup(name string) Logger {
 }
 
 func (l *stdLogger) log(level Level, ctx context.Context, msg string, keysAndValues ...any) {
+	ctx = ctxOrBackground(ctx) // #97：Ctx* 入参 nil ctx 统一兜底
 	if !l.ShouldLog(level) {
 		return
 	}
@@ -105,6 +106,7 @@ func formatAttrsAndKV(attrs []Attr, keysAndValues ...any) string {
 }
 
 func (l *stdLogger) logf(level Level, ctx context.Context, format string, args ...any) {
+	ctx = ctxOrBackground(ctx) // #97：Ctx* 入参 nil ctx 统一兜底
 	if !l.ShouldLog(level) {
 		return
 	}

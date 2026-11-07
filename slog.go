@@ -36,12 +36,10 @@ type slogLogger struct {
 	groups []string
 	// handler 非 nil 时走消费方注入的 slog.Handler，由其负责格式与输出；
 	// nil 时走内置 JSON→stdout 路径。构造后不可变，clone 时原样携带。
+	// 组链**不**应用到 handler（#99）：框架字段必须留在组外，用户字段经
+	// slog.Group 显式包裹（见 emitToHandler），此前整体 h.WithGroup 会把
+	// service/trace_id/caller 一并嵌进组——切后端即换 schema。
 	handler slog.Handler
-	// groupedHandler 是 groups 链已应用到 handler 的缓存（#87）：派生时
-	// 构建一次，避免每条记录重放 WithGroup 链（slog.Handler.WithGroup 按
-	// 约定应返回缓存好的派生 handler，重放是纯浪费）。handler 为 nil 时
-	// 保持 nil。
-	groupedHandler slog.Handler
 }
 
 // SlogOption 是 NewSlogLogger 的函数选项。
@@ -93,9 +91,8 @@ func (l *slogLogger) clone() *slogLogger {
 			Attrs:   append([]Attr(nil), cp.Attrs...),
 			Ctx:     cp.Ctx,
 		},
-		groups:         append([]string(nil), l.groups...),
-		handler:        l.handler,
-		groupedHandler: l.groupedHandler,
+		groups:  append([]string(nil), l.groups...),
+		handler: l.handler,
 	}
 }
 
@@ -117,17 +114,20 @@ func (l *slogLogger) WithAttrs(attrs ...Attr) Logger {
 	return c
 }
 
-// WithGroup 返回带字段命名空间的子 logger（#75 #83）。
+// WithGroup 返回带字段命名空间的子 logger（#75 #83 #99）。
 //
 // slog 语义：group 是结构化字段的命名空间，链式调用**累积嵌套**——
-// WithGroup("a").WithGroup("b") 后用户字段落在 "a.b." 前缀下（此前单槽位
-// 静默只留最后一层）。两条输出路径统一生效：
+// WithGroup("a").WithGroup("b") 后用户字段落在 "a.b." 命名空间下（此前
+// 单槽位静默只留最后一层）。两条输出路径统一生效，且**框架字段
+// （time/level/message/service/trace_id/caller）都不进组**：
 //
-//   - 内置 JSON 路径：用户 Attr/kv 键加 "<g1>.<g2>." 前缀（与 SlogHandler
-//     桥接的 "group.key" 方案同一口径）；框架字段（time/level/message/
-//     service/trace_id/caller）不进组。
-//   - 注入 Handler 路径：派生时把组链应用到 handler（h.WithGroup），由
-//     Handler 决定嵌套结构（缓存于派生实例，不在每条记录上重放）。
+//   - 内置 JSON 路径：用户 Attr/kv 键加 "<g1>.<g2>." 前缀平铺（与
+//     SlogHandler 桥接的 "group.key" 方案同一口径）。
+//   - 注入 Handler 路径：用户字段（Attr/kv）经 slog.Group 显式包裹成
+//     嵌套结构，由注入的 Handler 原生渲染；service/trace_id/caller
+//     保持记录顶层属性（#99：此前把整个 handler h.WithGroup，框架字段
+//     作为 record attr 一并被嵌进组——同一 logger 切后端即换 schema，
+//     按 .service/.trace_id 检索的链路在 Handler 路径上直接断掉）。
 //
 // name 为空串时为 no-op（对齐 slog.Handler.WithGroup 语义）。
 func (l *slogLogger) WithGroup(name string) Logger {
@@ -136,13 +136,6 @@ func (l *slogLogger) WithGroup(name string) Logger {
 		return c
 	}
 	c.groups = append(c.groups, name)
-	if c.handler != nil {
-		h := c.handler
-		if c.groupedHandler != nil {
-			h = c.groupedHandler
-		}
-		c.groupedHandler = h.WithGroup(name)
-	}
 	return c
 }
 
@@ -158,6 +151,7 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 // log/slog/logger.go 源码行。pc==0 / ts.IsZero() 表示未提供，在输出时自行
 // 探测 caller、取当前时间（本地调用路径语义不变）。
 func (l *slogLogger) emitAt(ctx context.Context, level Level, msg string, pc uintptr, ts time.Time, keysAndValues ...any) {
+	ctx = ctxOrBackground(ctx) // #97：Ctx* 入参 nil ctx 统一兜底（ExtractTrace 与注入 Handler 都不再收到 nil）
 	if !l.ShouldLog(level) {
 		return
 	}
@@ -232,6 +226,21 @@ func (l *slogLogger) emitAt(ctx context.Context, level Level, msg string, pc uin
 			"marshalErr": err.Error(),
 			"rawKv":      fmt.Sprint(keysAndValues...),
 		}
+		// 降级不脱钩（#100）：关联字段一并带上——service/trace_id/caller 取自
+		// 上方已写入 record 的框架字段，WithAttrs 持久属性逐键平铺（值统一转
+		// 字符串）。一条 NaN 不该让整条日志失去可检索性：故障排查时最需要
+		// 的 trace/service 关联恰好不能丢。框架降级字段优先，用户同名键让位。
+		for _, k := range [...]string{"service", "trace_id", "caller"} {
+			if v, ok := record[k].(string); ok {
+				fallback[k] = v
+			}
+		}
+		for _, a := range l.Attrs {
+			k := groupPrefix + a.Key
+			if _, taken := fallback[k]; !taken {
+				fallback[k] = fmt.Sprintf("%v", logValue(a.Value))
+			}
+		}
 		buf, _ = json.Marshal(fallback) // 仅字符串字段，不会失败
 	}
 	// 换行并入同一次 Write（#65）：两次 Write 之间无原子性保证，并发下另一
@@ -255,6 +264,24 @@ var (
 // error 被直接丢弃，与同函数注释「绝不静默丢弃整条日志」的承诺自相矛盾。
 func StdoutWriteFailures() uint64 {
 	return stdoutWriteFailures.Load()
+}
+
+// handlerWriteFailures 累计注入 Handler 路径 slog.Handler.Handle 失败次数；
+// handlerFailReported 保证降级 stderr 报告只发一次（#98）。
+var (
+	handlerWriteFailures atomic.Uint64
+	handlerFailReported  atomic.Bool
+)
+
+// HandlerWriteFailures 返回注入 Handler 路径 slog.Handler.Handle 失败的
+// 累计次数（#98），与 StdoutWriteFailures 同为排障入口。
+//
+// Handle 返回 error 的语义是「这条记录没有写出去」；此前 emitToHandler 把
+// 它直接丢弃（`_ = h.Handle(...)`），注入的 Handler 恒错（磁盘满、下游
+// 阻塞等）时记录彻底消失且无任何信号——与内置路径「绝不静默丢弃」的
+// 契约在同函数另一条路径上被打破。
+func HandlerWriteFailures() uint64 {
+	return handlerWriteFailures.Load()
 }
 
 // writeStdout 写一行日志到 stdout（#79）：失败时计数，并降级到 stderr 报告
@@ -286,6 +313,7 @@ func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string,
 	if ts.IsZero() {
 		ts = time.Now()
 	}
+	// 框架字段（service/trace_id/caller）保持记录顶层属性，不进组（#99）。
 	attrs := make([]slog.Attr, 0, 4+len(l.Attrs)+len(keysAndValues)/2+1)
 	if l.Service != "" {
 		attrs = append(attrs, slog.String("service", l.Service))
@@ -296,26 +324,40 @@ func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string,
 	if caller != "" {
 		attrs = append(attrs, slog.String("caller", caller))
 	}
+
+	// 用户字段（Attr/kv）经 slog.Group 显式包裹组链（#99）：与内置路径
+	// 「框架字段不进组」的层级口径一致；组由 slog.Group 表达、注入的
+	// Handler 原生渲染嵌套结构——此前整体 h.WithGroup 会把上面的框架
+	// 字段一并嵌进组，切后端即换 schema，.service/.trace_id 检索断链。
+	user := make([]slog.Attr, 0, len(l.Attrs)+len(keysAndValues)/2+1)
 	for _, a := range l.Attrs {
-		attrs = append(attrs, slog.Any(a.Key, logValue(a.Value)))
+		user = append(user, slog.Any(a.Key, logValue(a.Value)))
 	}
 	for i := 0; i+1 < len(keysAndValues); i += 2 {
 		key := fmt.Sprintf("%v", keysAndValues[i])
-		attrs = append(attrs, slog.Any(key, logValue(keysAndValues[i+1])))
+		user = append(user, slog.Any(key, logValue(keysAndValues[i+1])))
 	}
 	if len(keysAndValues)%2 == 1 {
 		lastKey := fmt.Sprintf("%v", keysAndValues[len(keysAndValues)-1])
-		attrs = append(attrs, slog.Any(lastKey, "(MISSING)"))
+		user = append(user, slog.Any(lastKey, "(MISSING)"))
 	}
+	for i := len(l.groups) - 1; i >= 0; i-- {
+		user = []slog.Attr{{Key: l.groups[i], Value: slog.GroupValue(user...)}}
+	}
+	attrs = append(attrs, user...)
 
-	h := l.handler
-	if l.groupedHandler != nil {
-		// 组链已在派生时应用到 handler 并缓存（#87），每条记录不再重放。
-		h = l.groupedHandler
-	}
 	rec := slog.NewRecord(ts, slogLevel(level), msg, pc)
 	rec.AddAttrs(attrs...)
-	_ = h.Handle(ctx, rec)
+	// Handle 失败必须可观测（#98）：计数累加 + 一次性 stderr 报告（同内置
+	// 路径 writeStdout 口径），此前 `_ =` 直接吞掉，记录消失无任何信号。
+	if err := l.handler.Handle(ctx, rec); err != nil {
+		handlerWriteFailures.Add(1)
+		if handlerFailReported.CompareAndSwap(false, true) {
+			fmt.Fprintf(os.Stderr,
+				"logx: 注入 Handler 路径 Handle 失败（本报告仅一次，后续失败计入 HandlerWriteFailures）: %v; 丢弃日志: %.200s\n",
+				err, msg)
+		}
+	}
 }
 
 // logxBridge 是 slogBridgeSink 的实现（#84）：SlogHandler 桥接直通入口，
@@ -601,6 +643,9 @@ func (a auditLogger) WithAttrs(attrs ...Attr) Logger {
 func (a auditLogger) WithGroup(name string) Logger {
 	return auditLogger{inner: a.inner.WithGroup(name)}
 }
+
+// Unwrap 暴露被包装的内部 logger（#106）：IsHlogBacked 沿 Unwrap 链钻取。
+func (a auditLogger) Unwrap() Logger { return a.inner }
 
 // Enabled 透传内部后端的级别判定——LevelEnabler 实现（#76）。
 // 此前 auditLogger 未实现该接口，logx.Enabled 恒 true，热路径守卫在

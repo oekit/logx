@@ -131,15 +131,22 @@ func TestNewSlogLogger_WithHandler_CloneKeepsHandler(t *testing.T) {
 		t.Fatalf("want 1 record, got %d", len(recs))
 	}
 	got := recs[0]
-	if got["rid"] != "r-1" {
-		t.Errorf("rid = %v", got["rid"])
-	}
 	if got["service"] != "child" {
 		t.Errorf("service = %v", got["service"])
 	}
-	// WithGroup 应作用到注入的 handler
-	if got["#group"] != "g" {
-		t.Errorf("group = %v", got["#group"])
+	// #99：用户字段（含派生前挂的 Attr）进组、框架字段留顶层
+	grp, ok := got["g"].([]slog.Attr)
+	if !ok {
+		t.Fatalf("g 组属性缺失: %#v", got["g"])
+	}
+	found := false
+	for _, a := range grp {
+		if a.Key == "rid" && a.Value.Any() == "r-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("rid 未落进 g 组: %#v", grp)
 	}
 }
 

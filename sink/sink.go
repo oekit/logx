@@ -248,7 +248,9 @@ func (s *RotatingSink) Sync() error {
 	return nil
 }
 
-// Close 关闭 lumberjack logger(幂等)。Close 之后 Write/Sync 返回 os.ErrClosed。
+// Close 关闭 lumberjack logger(幂等)。Close 之后 Write/Sync/Rotate 均返回
+// os.ErrClosed（#103：契约补全——此前提升上来的 lumberjack Rotate() 不受
+// 保护，Close 置 nil 后调用即 nil 解引用 panic）。
 func (s *RotatingSink) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -259,4 +261,18 @@ func (s *RotatingSink) Close() error {
 	err := s.Logger.Close()
 	s.Logger = nil
 	return err
+}
+
+// Rotate 覆盖 lumberjack 提升方法(#103):Close 之后返回 os.ErrClosed——
+// 此前 (*lumberjack.Logger).Rotate 被原样提升到 RotatingSink 上,Close 里
+// s.Logger 置 nil 后调用它,lumberjack 内部 l.mu.Lock() 对 nil 指针解引用
+// 直接 panic,绕过「Close 后只返回 error」的 Sink 契约。正常路径持锁透传
+// lumberjack.Rotate(手动触发轮转,业务可在低峰期调用)。
+func (s *RotatingSink) Rotate() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed.Load() || s.Logger == nil {
+		return os.ErrClosed
+	}
+	return s.Logger.Rotate()
 }

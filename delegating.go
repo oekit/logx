@@ -19,7 +19,9 @@ import (
 //
 // component 为该包/子系统的归属名；传空串表示不打 component 属性。
 // service name 属于消费方，包归属统一用 component 属性标识。
-// WithService/WithAttrs/WithGroup/WithCtx 返回的子 logger 同样保持懒解析。
+// WithService/WithAttrs/WithGroup/WithCtx 返回的子 logger 同样保持懒解析，
+// 并**继承派生时刻**的实例级级别下限（#101，与 std/slog/hlog 后端 clone
+// 拷 Level 的继承语义对齐；派生之后父子各自独立调级）。
 //
 // SetLevel 是**实例级**的（#81）：记录在本 wrapper 上、只影响本实例的下限，
 // 不再转发修改全局默认 logger——此前一个 SDK 包级 Delegating 变量调
@@ -42,9 +44,20 @@ type delegatingLogger struct {
 	resolve func() Logger
 	// override 是实例级级别下限（#81）：SetLevel 写入这里。delegating 是
 	// 值语义（接口持有值拷贝），覆盖状态经共享单元对同一实例的所有拷贝
-	// 可见；With* 派生时换新单元（子 logger 独立配置，与后端行为一致）。
+	// 可见；With* 派生时把当前下限值拷贝给子实例（#101：继承派生时刻的
+	// 下限、派生后各自独立调级——与 std/slog/hlog 后端 clone/Snapshot 拷
+	// Level 的继承语义对齐；此前换新空单元，父实例收紧后子 logger 静默
+	// 回默认档，「与后端行为一致」的旧注释与三个后端的实际行为相反）。
 	// 存 Level+1（0 表示未设置，区分未设置与 LevelDebug 零值）。
 	override *atomic.Int32
+}
+
+// deriveOverride 派生时继承父实例的级别下限（#101）：拷贝当前值到新单元，
+// 派生后父子各自独立（后端 clone 拷 Level 同语义）。
+func (d delegatingLogger) deriveOverride() *atomic.Int32 {
+	child := new(atomic.Int32)
+	child.Store(d.override.Load())
+	return child
 }
 
 // pass 实例级下限预检：已设置下限且事件级别低于下限时提前丢弃。
@@ -187,23 +200,29 @@ func (d delegatingLogger) CtxErrorf(ctx context.Context, format string, args ...
 	d.resolve().CtxErrorf(ctx, format, args...)
 }
 
-// 子 logger 构建（返回的仍是懒解析 logger；覆盖单元换新，子 logger 独立配置）
+// 子 logger 构建（返回的仍是懒解析 logger；级别下限继承派生时刻的值，
+// 派生后独立调级——#101）
 
 func (d delegatingLogger) WithCtx(ctx context.Context) Logger {
-	return delegatingLogger{resolve: func() Logger { return d.resolve().WithCtx(ctx) }, override: new(atomic.Int32)}
+	return delegatingLogger{resolve: func() Logger { return d.resolve().WithCtx(ctx) }, override: d.deriveOverride()}
 }
 
 func (d delegatingLogger) WithService(name string) Logger {
-	return delegatingLogger{resolve: func() Logger { return d.resolve().WithService(name) }, override: new(atomic.Int32)}
+	return delegatingLogger{resolve: func() Logger { return d.resolve().WithService(name) }, override: d.deriveOverride()}
 }
 
 func (d delegatingLogger) WithAttrs(attrs ...Attr) Logger {
-	return delegatingLogger{resolve: func() Logger { return d.resolve().WithAttrs(attrs...) }, override: new(atomic.Int32)}
+	return delegatingLogger{resolve: func() Logger { return d.resolve().WithAttrs(attrs...) }, override: d.deriveOverride()}
 }
 
 func (d delegatingLogger) WithGroup(name string) Logger {
-	return delegatingLogger{resolve: func() Logger { return d.resolve().WithGroup(name) }, override: new(atomic.Int32)}
+	return delegatingLogger{resolve: func() Logger { return d.resolve().WithGroup(name) }, override: d.deriveOverride()}
 }
+
+// Unwrap 暴露当前解析目标（#106）：IsHlogBacked 沿 Unwrap 链向下钻取，
+// Delegating 包装（如 SDK 包级 logger）落到 hlog 后端时递归防御仍生效。
+// 解析目标动态变化（SetDefault 后跟随），钻取取当下值。
+func (d delegatingLogger) Unwrap() Logger { return d.resolve() }
 
 // SetLevel 实例级调级（#81）：下限记录在本 wrapper 上，**不再转发修改全局
 // 默认 logger**——此前直接 resolve().SetLevel(level)，一个 SDK 包级

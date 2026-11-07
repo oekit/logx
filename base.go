@@ -71,6 +71,17 @@ func (b *BaseLogger) EffectiveCtx() context.Context {
 	return context.Background()
 }
 
+// ctxOrBackground 将 Ctx* 方法入参里的 nil ctx 兜底为 context.Background()
+// （#97，对齐 EffectiveCtx 的既有口径）。错误处理路径上 ctx 极易为 nil
+// （var ctx context.Context; if err != nil { log.CtxError(ctx, ...) }），
+// 不兜底会把 nil 透传给 trace 提取器或注入的 slog.Handler 而崩进程。
+func ctxOrBackground(ctx context.Context) context.Context {
+	if ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
+
 // ShouldLog 检查给定级别是否应被记录。
 func (b *BaseLogger) ShouldLog(level Level) bool {
 	b.Mu.Lock()

@@ -157,7 +157,13 @@ func SetTraceExtractor(fn func(context.Context) string) {
 
 // ExtractTrace 从 context 提取 trace_id。
 // 若未注册提取器或 context 中无 trace_id，返回空字符串。
+// ctx 为 nil 时同样返回空字符串（#97）：注册提取器后 nil ctx 若原样传入
+// 用户提取器，提取器里的 ctx.Value(...) 会 nil 解引用 panic——错误处理
+// 路径上 `if err != nil { logx.CtxError(ctx, ...) }` 的 ctx 常常就是 nil。
 func ExtractTrace(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
 	fnPtr := traceExtractor.Load()
 	if fnPtr == nil {
 		return ""

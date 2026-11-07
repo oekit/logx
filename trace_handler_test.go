@@ -89,3 +89,29 @@ func TestTraceHandler_WithAttrsKeepsWrapping(t *testing.T) {
 		t.Fatalf("attrs lost: %s", buf.String())
 	}
 }
+
+// TestTraceHandler_NoDuplicateFromWithAttrs（#104）：经 handler.With(...)
+// 挂上去的同名属性进了 inner、不在 Record 里，此前「已有同名字段不重复
+// 注入」只查 Record——trace_id 被注入第二次，输出重复键（Go 的
+// encoding/json 取后者，别的解析器可能取前者，取值不确定）。
+// 钉住：With("trace_id","manual") 后输出恰一个 trace_id，值为 manual。
+func TestTraceHandler_NoDuplicateFromWithAttrs(t *testing.T) {
+	installExtractor(t)
+	var buf bytes.Buffer
+	base := TraceHandler(slog.NewJSONHandler(&buf, nil))
+	logger := slog.New(base).With("trace_id", "manual")
+
+	ctx := withTrace(context.Background(), "from-ctx")
+	logger.InfoContext(ctx, "derived")
+
+	out := buf.String()
+	if n := strings.Count(out, `"trace_id"`); n != 1 {
+		t.Fatalf("trace_id 出现 %d 次, want 1: %s", n, out)
+	}
+	if !strings.Contains(out, `"trace_id":"manual"`) {
+		t.Fatalf("应保留调用方显式值 manual: %s", out)
+	}
+	if strings.Contains(out, "from-ctx") {
+		t.Fatalf("不应再注入 ctx 提取值: %s", out)
+	}
+}
