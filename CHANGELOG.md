@@ -2,6 +2,10 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [sink/v0.1.1] — 2026-11-08
+
+- chore: 补齐本版版本节——上一个已发布 tag（sink/）的 CHANGELOG 快照缺本版段（tag 快照不可变），本版补上并带出新的地板v0.1.0
+
 ## [hertzlog/v0.1.1] — 2026-11-08
 
 - chore: 补齐本版版本节——上一个已发布 tag（hertzlog/）的 CHANGELOG 快照缺本版段（tag 快照不可变），本版补上并带出新的地板v0.1.0
