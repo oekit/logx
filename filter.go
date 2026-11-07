@@ -262,4 +262,11 @@ func (f *filterLogger) WithGroup(name string) Logger {
 	return &filterLogger{base: f.base.WithGroup(name), cfg: f.cfg}
 }
 
+// Enabled 判定脱敏后端是否输出该级别——LevelEnabler 实现（#76）。
+// 此前 filterLogger 未实现该接口，logx.Enabled 走类型断言失败分支恒
+// true：被级别过滤掉的事件仍付出全部序列化/脱敏成本，热路径守卫失效。
+func (f *filterLogger) Enabled(level Level) bool {
+	return Enabled(f.base, level)
+}
+
 func (f *filterLogger) SetLevel(level Level) { f.base.SetLevel(level) }

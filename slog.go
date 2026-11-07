@@ -570,6 +570,13 @@ func (a auditLogger) WithGroup(name string) Logger {
 	return auditLogger{inner: a.inner.WithGroup(name)}
 }
 
+// Enabled 透传内部后端的级别判定——LevelEnabler 实现（#76）。
+// 此前 auditLogger 未实现该接口，logx.Enabled 恒 true，热路径守卫在
+// 最常用的审计包装器上失效。
+func (a auditLogger) Enabled(level Level) bool {
+	return Enabled(a.inner, level)
+}
+
 // 其余 Logger 方法委托 inner。
 func (a auditLogger) Debug(msg string, kv ...any) { a.inner.Debug(msg, kv...) }
 func (a auditLogger) Info(msg string, kv ...any)  { a.inner.Info(msg, kv...) }
