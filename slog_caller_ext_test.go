@@ -11,6 +11,23 @@ import (
 	"github.com/oekit/logx/internal/logxcallertest"
 )
 
+// TestSlogHandler_WrappedChainCaller 钉住 #84 回退路径：桥接链上有包装层
+// （auditLogger 未实现 PC 直通）时走栈回溯，回溯必须跳过 stdlib log/slog
+// 内部帧（(*Logger).log），caller 归属真实调用点而非 log/slog/logger.go。
+func TestSlogHandler_WrappedChainCaller(t *testing.T) {
+	sl := logx.Slogger(logx.NewAuditLogger("audit"))
+	caller := logxcallertest.EmitCallerViaSlog(sl)
+	if caller == "" {
+		t.Fatal("caller 字段缺失")
+	}
+	if strings.Contains(caller, "log/slog") {
+		t.Fatalf("caller 错标到 stdlib slog 源码: %s", caller)
+	}
+	if !strings.Contains(caller, "caller_probe.go") {
+		t.Fatalf("caller 应归属探针调用点: %s", caller)
+	}
+}
+
 func TestSkipCallerFiles_EndToEnd(t *testing.T) {
 	probeFile := logxcallertest.File()
 

@@ -149,17 +149,29 @@ func (l *slogLogger) WithGroup(name string) Logger {
 // emit 是所有日志方法的统一入口。注入了 WithHandler 时交给该 Handler 输出；
 // 否则输出一行结构化 JSON 到 stdout。
 func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndValues ...any) {
+	l.emitAt(ctx, level, msg, 0, time.Time{}, keysAndValues...)
+}
+
+// emitAt 是统一输出入口（#84）：pc/ts 由桥接路径（SlogHandler 直通）传入
+// slog 侧已解析好的调用点与时间戳——此前 Handle 忽略 r.PC/r.Time 走栈回溯，
+// 第一个非 logx 帧是 stdlib log/slog.(*Logger).log，caller 恒错标到
+// log/slog/logger.go 源码行。pc==0 / ts.IsZero() 表示未提供，在输出时自行
+// 探测 caller、取当前时间（本地调用路径语义不变）。
+func (l *slogLogger) emitAt(ctx context.Context, level Level, msg string, pc uintptr, ts time.Time, keysAndValues ...any) {
 	if !l.ShouldLog(level) {
 		return
 	}
 
 	if l.handler != nil {
-		l.emitToHandler(ctx, level, msg, keysAndValues...)
+		l.emitToHandler(ctx, level, msg, pc, ts, keysAndValues...)
 		return
 	}
 
+	if ts.IsZero() {
+		ts = time.Now()
+	}
 	record := map[string]any{
-		"time":    time.Now().Format(time.RFC3339Nano),
+		"time":    ts.Format(time.RFC3339Nano),
 		"level":   LevelString(level),
 		"message": msg,
 	}
@@ -170,8 +182,14 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 		record["trace_id"] = traceID
 	}
 
-	// 捕获真实调用方位置（跳过 logx 内部帧）
-	if caller := callerOutsideLogx(); caller != "" {
+	// 捕获真实调用方位置（跳过 logx 内部帧）；桥接路径复用 slog 已解析的 PC
+	caller := ""
+	if pc != 0 {
+		caller = pcCaller(pc)
+	} else {
+		caller = callerOutsideLogx()
+	}
+	if caller != "" {
 		record["caller"] = caller
 	}
 
@@ -227,8 +245,17 @@ func (l *slogLogger) emit(ctx context.Context, level Level, msg string, keysAndV
 
 // emitToHandler 将日志经消费方注入的 slog.Handler 输出。字段口径与内置 JSON
 // 路径一致（service / trace_id / caller / Attr / kv），格式完全由 Handler 决定。
-func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string, keysAndValues ...any) {
+// bridgePC/bridgeTS 非 nil 时复用桥接侧已解析的调用点与时间戳（#84）。
+func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string, bridgePC uintptr, bridgeTS time.Time, keysAndValues ...any) {
 	pc, caller := realCallerOutsideLogx()
+	if bridgePC != 0 {
+		pc = bridgePC
+		caller = pcCaller(bridgePC)
+	}
+	ts := bridgeTS
+	if ts.IsZero() {
+		ts = time.Now()
+	}
 	attrs := make([]slog.Attr, 0, 4+len(l.Attrs)+len(keysAndValues)/2+1)
 	if l.Service != "" {
 		attrs = append(attrs, slog.String("service", l.Service))
@@ -256,9 +283,29 @@ func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string,
 		// 组链已在派生时应用到 handler 并缓存（#87），每条记录不再重放。
 		h = l.groupedHandler
 	}
-	rec := slog.NewRecord(time.Now(), slogLevel(level), msg, pc)
+	rec := slog.NewRecord(ts, slogLevel(level), msg, pc)
 	rec.AddAttrs(attrs...)
 	_ = h.Handle(ctx, rec)
+}
+
+// logxBridge 是 slogBridgeSink 的实现（#84）：SlogHandler 桥接直通入口，
+// 复用 slog 侧已解析的调用点 PC 与时间戳，不再栈回溯。
+func (l *slogLogger) logxBridge(ctx context.Context, level Level, pc uintptr, ts time.Time, msg string, kv ...any) {
+	l.emitAt(ctx, level, msg, pc, ts, kv...)
+}
+
+// pcCaller 将单个 PC 解析为 "file:line"（与 realCallerOutsideLogx 的字符串
+// 口径一致）。桥接路径复用 slog 已解析好的调用点（r.PC）时使用。
+func pcCaller(pc uintptr) string {
+	if pc == 0 {
+		return ""
+	}
+	frames := runtime.CallersFrames([]uintptr{pc})
+	f, _ := frames.Next()
+	if f.File == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", filepath.Base(f.File), f.Line)
 }
 
 // slogLevel 将 logx.Level 映射为 log/slog.Level。
@@ -366,6 +413,13 @@ func realCallerOutsideLogx() (uintptr, string) {
 				strings.HasPrefix(rest, "/hlog") || strings.HasPrefix(rest, "/hertzlog") {
 				continue
 			}
+		}
+		// stdlib log/slog 的内部帧（如 (*Logger).log）同属日志机制而非业务
+		// 调用方（#84）：经 SlogHandler 桥接的包装链（Delegating/audit 等，
+		// 未走 PC 直通）回溯时，这些帧会被当作第一个外部帧，caller 恒错标
+		// 到 log/slog/logger.go 的 stdlib 源码行。
+		if strings.HasPrefix(fn.Name(), "log/slog.") {
+			continue
 		}
 		if isSkipFile(skipFiles, file) {
 			continue

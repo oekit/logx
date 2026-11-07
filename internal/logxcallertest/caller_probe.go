@@ -9,6 +9,7 @@ package logxcallertest
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"os"
 	"runtime"
 	"strings"
@@ -32,6 +33,50 @@ func EmitCaller() string {
 	old := os.Stdout
 	os.Stdout = w
 	logx.NewSlogLogger("svc").Info("caller probe")
+	os.Stdout = old
+	w.Close()
+	out, _ := io.ReadAll(r)
+
+	var rec map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &rec); err != nil {
+		return "parse error: " + err.Error()
+	}
+	c, _ := rec["caller"].(string)
+	return c
+}
+
+// EmitCallerWith 经消费方提供的 Logger 输出一条日志，返回记录到的 caller
+// 字段——供深栈/多层包装场景（#82）探针：调用方帧（本函数）即期望归属。
+func EmitCallerWith(l logx.Logger) string {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "pipe error: " + err.Error()
+	}
+	old := os.Stdout
+	os.Stdout = w
+	l.Info("caller probe")
+	os.Stdout = old
+	w.Close()
+	out, _ := io.ReadAll(r)
+
+	var rec map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &rec); err != nil {
+		return "parse error: " + err.Error()
+	}
+	c, _ := rec["caller"].(string)
+	return c
+}
+
+// EmitCallerViaSlog 经消费方提供的 *slog.Logger（SlogHandler 桥接路径，#84）
+// 输出一条日志，返回记录到的 caller 字段。
+func EmitCallerViaSlog(sl *slog.Logger) string {
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "pipe error: " + err.Error()
+	}
+	old := os.Stdout
+	os.Stdout = w
+	sl.Info("caller bridge probe")
 	os.Stdout = old
 	w.Close()
 	out, _ := io.ReadAll(r)
