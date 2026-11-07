@@ -17,6 +17,9 @@ type filterConfig struct {
 
 // FilterKey 把命中 key 的 kv 值替换为 "***"（精确匹配键名，含点路径字面量，
 // 如 "user.password"）。
+//
+// 注意：FilterKey 只作用于 kv/Attr 的**值**；printf 路径无键名，不脱敏
+// （见 WithFilter 的警告，#80）。
 func FilterKey(keys ...string) FilterOption {
 	return func(c *filterConfig) {
 		if c.keys == nil {
@@ -40,6 +43,11 @@ func FilterFunc(fn func(msg string, kvs []any) bool) FilterOption {
 // 相同过滤规则。典型用法（防止敏感信息进日志）：
 //
 //	l := logx.WithFilter(logx.Default(), logx.FilterKey("password", "token"))
+//
+// ⚠️ printf 路径（Debugf/Infof/... 与 Ctx*f）**不做 FilterKey 脱敏**，只做
+// FilterFunc 丢弃评估（#80）：printf 参数只有格式化值、没有键名，脱敏无从
+// 匹配——格式化串里的 password/token 会原样落盘。敏感数据一律走 kv
+// 结构化风格（Info("login", "password", pw)），禁止经 printf 格式化输出。
 func WithFilter(l Logger, opts ...FilterOption) Logger {
 	if l == nil {
 		panic("logx: WithFilter called with nil logger")
