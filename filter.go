@@ -3,6 +3,7 @@ package logx
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // FilterOption 配置 WithFilter 的过滤行为。
@@ -15,8 +16,12 @@ type filterConfig struct {
 	drop func(msg string, kvs []any) bool
 }
 
-// FilterKey 把命中 key 的 kv 值替换为 "***"（精确匹配键名，含点路径字面量，
-// 如 "user.password"）。
+// FilterKey 把命中 key 的 kv 值替换为 "***"。键名匹配大小写不敏感（#85，
+// EqualFold：HTTP 头的规范键名是 Authorization/X-Api-Key，安全控制不应要求
+// 消费方逐大小写枚举——此前配置 FilterKey("authorization") 时 "Authorization"
+// 键的值原样落盘），含点路径字面量，如 "user.password"；非 string 键先按
+// %v 归一成键名再比对（与后端 emit 侧的键口径一致——emit 侧会
+// fmt.Sprintf("%v") 稳定成键，此前非 string 键完全不可脱敏）。
 //
 // 注意：FilterKey 只作用于 kv/Attr 的**值**；printf 路径无键名，不脱敏
 // （见 WithFilter 的警告，#80）。
@@ -29,6 +34,17 @@ func FilterKey(keys ...string) FilterOption {
 			c.keys[k] = struct{}{}
 		}
 	}
+}
+
+// matchKey 判定键名是否命中过滤键（#85）：大小写不敏感。键集通常只有
+// 个位数条目，线性 EqualFold 比下小写归一的 map 查找省一次分配。
+func (c *filterConfig) matchKey(key string) bool {
+	for k := range c.keys {
+		if strings.EqualFold(k, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // FilterFunc 命中即丢弃整条记录（在脱敏之后评估）。
@@ -72,10 +88,10 @@ func (f *filterLogger) filterKvs(kvs []any) []any {
 	out := make([]any, len(kvs))
 	copy(out, kvs)
 	for i := 0; i+1 < len(out); i += 2 {
-		if k, ok := out[i].(string); ok {
-			if _, hit := f.cfg.keys[k]; hit {
-				out[i+1] = "***"
-			}
+		// #85：键统一按 %v 归一（非 string 键与 emit 侧键口径一致），
+		// 命中判定大小写不敏感。
+		if f.cfg.matchKey(fmt.Sprintf("%v", out[i])) {
+			out[i+1] = "***"
 		}
 	}
 	return out
@@ -233,8 +249,9 @@ func (f *filterLogger) maskAttrs(attrs []Attr) []Attr {
 	}
 	out := make([]Attr, len(attrs))
 	copy(out, attrs)
+	// #85：键匹配大小写不敏感，与 filterKvs 同一口径。
 	for i := range out {
-		if _, hit := f.cfg.keys[out[i].Key]; hit {
+		if f.cfg.matchKey(out[i].Key) {
 			out[i].Value = "***"
 		}
 	}
