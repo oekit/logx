@@ -2,6 +2,12 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.8.7] — 2026-11-08
+
+- feat: 导出 `ErrKey` 常量锁死错误字段名 "err"（两矩阵字段收敛锚点，oekit#161）——错误字段名从此有单一权威常量，消费方不再各写字符串字面量
+- build: 终局地板/版本行对齐（全矩阵收口，纯基线声明不发版）
+- docs: 版本引用对齐最新 tag（refresh_versions）
+
 ## [v0.8.6] — 2026-11-07
 
 - fix(std): stdWriter 动态委托 log.Writer()——恢复 log.SetOutput 拦截契约（#78 后遗症，gormx 地板抬升实测回归）：私有 log.New(os.Stderr) 固化绑定绕过标准库 log 输出重定向，消费方测试捕获法全部捕空；缺省仍 os.Stderr、flags=0 单时间戳不变
