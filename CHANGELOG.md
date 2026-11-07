@@ -2,6 +2,10 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.8.6] — 2026-11-07
+
+- fix(std): stdWriter 动态委托 log.Writer()——恢复 log.SetOutput 拦截契约（#78 后遗症，gormx 地板抬升实测回归）：私有 log.New(os.Stderr) 固化绑定绕过标准库 log 输出重定向，消费方测试捕获法全部捕空；缺省仍 os.Stderr、flags=0 单时间戳不变
+
 ## [v0.8.5] — 2026-11-07
 
 - fix(slog): 内置 JSON 路径不再静默丢弃 WithGroup——用户 Attr/kv 施加组前缀，与 SlogHandler 桥接口径统一（#75）
