@@ -2,6 +2,12 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.8.11] — 2026-11-08
+
+- fix(std): stdLogDynamicWriter 委托写借默认 logger 的锁——std 后端输出改经 log.Output（持 log.std.mu 窗口内完成落盘），修复「logx std 行与 stdlib log.Printf 并发写同一 log.SetOutput 重定向目标互不排斥」的 data race（修复前 log.Writer().Write 只持 stdWriter 私有锁，bytes.Buffer 经典捕获形态下 -race 必报）；借道窗口内把默认 logger flags 钉 0，「单毫秒时间戳」契约不回退（窗口内第三方 log.Printf 临时失去时间戳前缀，zap.RedirectStdLog 同款取舍）（#111）
+
+关联问题单：logx#111。
+
 ## [kitexlog/v0.1.10] — 2026-11-08
 
 - build: 依赖地板对齐——本版把 oekit 依赖地板抬到各依赖当前最新已发布版本（matrix-tools/scripts/align_floors.py 维护轮）

@@ -17,12 +17,35 @@ type stdLogger struct {
 // （gormx 地板抬到 v0.8.5 后实测回归）：#78 把输出目标从包级 log.Printf
 // 换成 log.New(os.Stderr, ...) 固化绑定后，消费方（gormx 的 PoolWarn/
 // redact 测试）经 log.SetOutput(buf) 的经典捕获法全部捕空——私有 logger
-// 绕过了 std log 的输出重定向。动态委托 log.Writer() 恢复该契约：
+// 绕过了 std log 的输出重定向。动态委托恢复该契约：
 // log.SetOutput 照常拦截、缺省仍是 os.Stderr、flags=0 单时间戳不变。
+//
+// #111：委托写**借默认 logger 的锁**完成（log.Output 在持 log.std.mu 的
+// 窗口内完成格式化+Write）。修复前走 log.Writer().Write(p)，只持
+// stdWriter 自己的 mutex；而 stdlib 侧 log.Printf 写同一重定向目标时持
+// log.std.mu——两把锁互不排斥 ⇒ logx std 行与 stdlib 日志并发写同一
+// 非线程安全目标（bytes.Buffer 经典捕获形态）是 data race，-race 必报。
+// stdlib 没有导出「取锁」API，唯一持锁跨 Write 的入口是 Logger.Output
+// 本身 ⇒ 借道它恢复 #78 之前的串行契约。
+//
+// flags 面：p 已是 flags=0 格式化好的整行，默认 logger 的 LstdFlags
+// 会在行首再叠秒级时间戳（#78 之前的老毛病）⇒ 借道窗口内把默认 logger
+// 的 flags 钉为 0，写完立刻还原。调用方保证：本 Write 恒在 stdWriter.mu
+// 之下（stdWriter 是包私有、只有本文件 log/logf 路径经其 Printf 触达），
+// 钉零/还原不会与其它 logx 写交错。窗口内的第三方 log.Printf 会临时
+// 失去时间戳前缀——zap.RedirectStdLog 同款取舍，窗口压到单行写出。
+// 重定向目标若非线程安全（bytes.Buffer 等），经由本路径与 stdlib 写方
+// 仍互斥（同一把 log.std.mu）；直接持有目标绕过两条 logger 的写法不受保护。
 type stdLogDynamicWriter struct{}
 
 func (stdLogDynamicWriter) Write(p []byte) (int, error) {
-	return log.Writer().Write(p)
+	prevFlags := log.Flags()
+	log.SetFlags(0)
+	defer log.SetFlags(prevFlags)
+	if err := log.Output(2, string(p)); err != nil {
+		return 0, err // Output 不回写字节数；失败按 0 报
+	}
+	return len(p), nil
 }
 
 // stdWriter 是 std 后端的私有输出器（#78）：本文件自带毫秒级 ts 前缀，
@@ -30,6 +53,8 @@ func (stdLogDynamicWriter) Write(p []byte) (int, error) {
 // （实测输出 "2026/11/06 22:53:19 2026-11-06 22:53:19.569 [INFO] ..."，
 // 双时间戳且前者无毫秒）。私有 log.Logger 置 flags=0；输出目标动态委托
 // 当前 log.Writer()（缺省 os.Stderr，见 stdLogDynamicWriter）。
+// #111：默认目标下所有 std 行经 stdWriter.mu 串行、再借 log.std.mu 落盘
+// ——与 stdlib 日志对同一目标全互斥。
 var stdWriter = log.New(stdLogDynamicWriter{}, "", 0)
 
 // NewStdLogger 创建标准库实现的 Logger。
