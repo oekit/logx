@@ -16,11 +16,17 @@
 
 ## [sink/v0.1.1] — 2026-11-08
 
-- chore: 补齐本版版本节——上一个已发布 tag（sink/）的 CHANGELOG 快照缺本版段（tag 快照不可变），本版补上并带出新的地板v0.1.0
+- fix(sink): RotatingSink 显式覆写 Rotate()——Close 后返回 os.ErrClosed 不再 nil 解引用 panic，契约补全 Write/Sync/Rotate（#103）
+- 补记：上一已发布 tag sink/v0.1.0 的 CHANGELOG 快照缺本模块版本段（tag 快照不可变），本版补落版本节；本模块 go.mod 无 oekit 依赖，无「依赖地板」可抬
+
+关联问题单：logx#103、logx#122。
 
 ## [hertzlog/v0.1.1] — 2026-11-08
 
-- chore: 补齐本版版本节——上一个已发布 tag（hertzlog/）的 CHANGELOG 快照缺本版段（tag 快照不可变），本版补上并带出新的地板v0.1.0
+- docs(hertzlog): 导出 godoc 示例改用现存 API 名（AsHlogLoggerZap/Zerolog），照抄不再编译失败（#105）
+- 补记：上一已发布 tag hertzlog/v0.1.0 的 CHANGELOG 快照缺本模块版本段（tag 快照不可变），本版补落版本节；本模块 go.mod 无 oekit 依赖，无「依赖地板」可抬
+
+关联问题单：logx#105、logx#122。
 
 ## [v0.8.9] — 2026-11-08
 
