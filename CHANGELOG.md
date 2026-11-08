@@ -2,6 +2,49 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.8.12] — 2026-11-09
+
+- fix(trace): WithGroup 继承 withKeys——With(键).WithGroup(组) 不再双 trace_id（#129）
+- perf(slog): emitToHandler 桥接快路径跳过全栈回溯——#84/#87 优化补完（#130）
+
+关联问题单：logx#129、logx#130。
+
+## [v0.8.11] — 2026-11-08
+
+- fix(std): stdLogDynamicWriter 委托写借默认 logger 的锁——std 后端输出改经 log.Output（持 log.std.mu 窗口内完成落盘），修复「logx std 行与 stdlib log.Printf 并发写同一 log.SetOutput 重定向目标互不排斥」的 data race（修复前 log.Writer().Write 只持 stdWriter 私有锁，bytes.Buffer 经典捕获形态下 -race 必报）；借道窗口内把默认 logger flags 钉 0，「单毫秒时间戳」契约不回退（窗口内第三方 log.Printf 临时失去时间戳前缀，zap.RedirectStdLog 同款取舍）（#111）
+
+关联问题单：logx#111。
+
+## [kitexlog/v0.1.10] — 2026-11-08
+
+- build: 依赖地板对齐——本版把 oekit 依赖地板抬到各依赖当前最新已发布版本（matrix-tools/scripts/align_floors.py 维护轮）
+
+## [hlog/v0.1.10] — 2026-11-08
+
+- build: 依赖地板对齐——本版把 oekit 依赖地板抬到各依赖当前最新已发布版本（matrix-tools/scripts/align_floors.py 维护轮）
+
+## [v0.8.10] — 2026-11-08
+
+- build: 依赖地板对齐——本版把 oekit 依赖地板抬到各依赖当前最新已发布版本（matrix-tools/scripts/align_floors.py 维护轮）
+
+## [sink/v0.1.1] — 2026-11-08
+
+- fix(sink): RotatingSink 显式覆写 Rotate()——Close 后返回 os.ErrClosed 不再 nil 解引用 panic，契约补全 Write/Sync/Rotate（#103）
+- 补记：上一已发布 tag sink/v0.1.0 的 CHANGELOG 快照缺本模块版本段（tag 快照不可变），本版补落版本节；本模块 go.mod 无 oekit 依赖，无「依赖地板」可抬
+
+关联问题单：logx#103、logx#122。
+
+## [hertzlog/v0.1.1] — 2026-11-08
+
+- docs(hertzlog): 导出 godoc 示例改用现存 API 名（AsHlogLoggerZap/Zerolog），照抄不再编译失败（#105）
+- 补记：上一已发布 tag hertzlog/v0.1.0 的 CHANGELOG 快照缺本模块版本段（tag 快照不可变），本版补落版本节；本模块 go.mod 无 oekit 依赖，无「依赖地板」可抬
+
+关联问题单：logx#105、logx#122。
+
+## [v0.8.9] — 2026-11-08
+
+- build: 依赖地板对齐——本版把 oekit 依赖地板抬到各依赖当前最新已发布版本（matrix-tools/scripts/align_floors.py 维护轮）
+
 ## [v0.8.8] — 2026-11-08
 
 审计批次 2（11 项）：开工前逐 issue 在 main 复核，全部仍存在，均实施修复并附回归测试。
