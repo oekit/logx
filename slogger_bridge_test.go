@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -120,6 +121,49 @@ func TestSlogHandler_PreservesRecordTimeAndPC(t *testing.T) {
 	wantLine := "slogger_bridge_test.go:" + strconv.Itoa(line)
 	if caller != wantLine {
 		t.Logf("caller = %q, PC 行 %d（PC 指向 runtime.Caller(0) 所在行）", caller, line)
+	}
+}
+
+// TestSlogHandler_FastPathSkipsCallerScan 钉住 #130：桥接快路径（后端为
+// slog 后端，logxBridge 直通 r.PC）此前在 emitToHandler 里**无条件**先执行
+// 一次 realCallerOutsideLogx() 全栈回溯，结果随即被 bridgePC 覆盖丢弃——
+// #84 宣称的「不再栈回溯」对注入 Handler 路径不成立，快路径每条记录仍
+// 白付 #87 实测 465-1515ns/op 的回溯成本。值语义全对所以既有测试没抓到，
+// 这里以测试期探针（callerScanProbe，生产恒 nil）计数回溯触发次数钉住：
+// 快路径 0 次；bridgePC==0 的本地路径仍回溯、caller 归属不回退。
+func TestSlogHandler_FastPathSkipsCallerScan(t *testing.T) {
+	var scans atomic.Int64
+	prev := callerScanProbe
+	callerScanProbe = func() { scans.Add(1) }
+	t.Cleanup(func() { callerScanProbe = prev })
+
+	// 快路径：Record.PC 非 0 直通 emitToHandler，不得触发全栈回溯。
+	h := newCaptureHandler()
+	backend := NewSlogLogger("svc", WithHandler(h))
+	thisPC, _, line, _ := runtime.Caller(0)
+	record := slog.NewRecord(time.Now(), slog.LevelInfo, "fast-path", thisPC)
+	record.AddAttrs(slog.String("k", "v"))
+	if err := SlogHandler(backend).Handle(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := scans.Load(); n != 0 {
+		t.Fatalf("桥接快路径触发全栈回溯 %d 次, want 0（#130：bridgePC 非 0 不得回溯）", n)
+	}
+	recs := h.snapshot()
+	if len(recs) != 1 {
+		t.Fatalf("records = %d, want 1", len(recs))
+	}
+	// 值语义不回退：caller 仍归属桥接侧传入的 PC（本测试文件该行）。
+	caller, _ := recs[0]["caller"].(string)
+	if !strings.Contains(caller, "slogger_bridge_test.go") {
+		t.Fatalf("caller = %q, want 归属 Record.PC 指向的本测试文件（行 %d）", caller, line)
+	}
+
+	// 本地直调路径（bridgePC==0）：仍走全栈回溯，探测保活。
+	backend.Info("slow-path")
+	if n := scans.Load(); n == 0 {
+		t.Fatal("本地路径未触发回溯，探测失效（caller 归属路径被误伤）")
 	}
 }
 

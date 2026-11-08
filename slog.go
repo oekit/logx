@@ -302,12 +302,19 @@ func writeStdout(buf []byte) {
 
 // emitToHandler 将日志经消费方注入的 slog.Handler 输出。字段口径与内置 JSON
 // 路径一致（service / trace_id / caller / Attr / kv），格式完全由 Handler 决定。
-// bridgePC/bridgeTS 非 nil 时复用桥接侧已解析的调用点与时间戳（#84）。
+// bridgePC/bridgeTS 非 nil 时复用桥接侧已解析的调用点与时间戳（#84），
+// 且不再做全栈回溯（#130）：此前无条件 realCallerOutsideLogx() 后再用
+// bridgePC 覆盖——SlogHandler 桥接快路径（logxBridge 直通 r.PC，为消灭
+// #87 实测 465-1515ns/op 的回溯成本而生）每条记录仍白付一次全栈扫描，
+// 结果随即被丢弃。改为条件短路：bridgePC 非 0 走直通，仅本地路径回溯。
 func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string, bridgePC uintptr, bridgeTS time.Time, keysAndValues ...any) {
-	pc, caller := realCallerOutsideLogx()
+	var pc uintptr
+	var caller string
 	if bridgePC != 0 {
 		pc = bridgePC
 		caller = pcCaller(bridgePC)
+	} else {
+		pc, caller = realCallerOutsideLogx()
 	}
 	ts := bridgeTS
 	if ts.IsZero() {
@@ -409,6 +416,13 @@ func logValue(v any) any {
 // nil 表示无额外跳过项。
 var callerSkipFiles atomic.Pointer[[]string]
 
+// callerScanProbe 仅测试构建里被赋值（同包测试直接注入）：每次进入全栈
+// 回溯探测 realCallerOutsideLogx 前调用，供测试断言「桥接快路径不再回溯」
+// （#130——该缺陷的值语义全对，只有观测探测次数才能钉住）。生产构建恒
+// nil，成本是慢路径上一次可预测分支；触发点本身在数百 ns 的回溯路径上，
+// 不在桥接快路径。
+var callerScanProbe func()
+
 // SkipCallerFiles 将指定源文件标记为日志内部帧：slog 后端归属 caller 字段时
 // 跳过这些文件中的调用方（重复注册同一文件自动去重，并发安全）。
 //
@@ -476,6 +490,9 @@ func callerOutsideLogx() string {
 // （实测 465-1515ns/op，随栈深恶化）。单遍后无 12 帧上限（#82）：
 // 栈深超过初始缓冲（64 帧）时扩容重取一次。
 func realCallerOutsideLogx() (uintptr, string) {
+	if callerScanProbe != nil {
+		callerScanProbe() // 仅测试构建非 nil（#130 回归钉：快路径不得进入本函数）
+	}
 	var buf [64]uintptr
 	n := runtime.Callers(3, buf[:])
 	pcs := buf[:n]
