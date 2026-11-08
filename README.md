@@ -24,10 +24,10 @@ hertz/kitex/zap/zerolog/logrus 会进所有消费者的依赖图；拆分后只 
 | go.mod 路径 | module | 职责 | 框架依赖 | 安装 |
 |---|---|---|---|---|
 | `./` | `github.com/oekit/logx` | 统一门面 + std/slog 后端 + shutdown | 无 | `go get github.com/oekit/logx@v0.8.11` |
-| `./sink/` | `github.com/oekit/logx/sink` | Sink/FileSink/RotatingSink/MultiSink 多目标输出 | lumberjack | `go get github.com/oekit/logx/sink@v0.1.0` |
-| `./hlog/` | `github.com/oekit/logx/hlog` | Hertz hlog 后端适配 | cloudwego/hertz | `go get github.com/oekit/logx/hlog@v0.1.0` |
-| `./hertzlog/` | `github.com/oekit/logx/hertzlog` | hertz-contrib logrus/zap/zerolog/slog 桥接 | hertz + hertz-contrib/logger/* + logrus/zap/zerolog | `go get github.com/oekit/logx/hertzlog@v0.1.0` |
-| `./kitexlog/` | `github.com/oekit/logx/kitexlog` | Kitex klog→logx 桥接（自 oekit/kitex 迁入） | cloudwego/kitex | `go get github.com/oekit/logx/kitexlog@v0.1.0` |
+| `./sink/` | `github.com/oekit/logx/sink` | Sink/FileSink/RotatingSink/MultiSink 多目标输出 | lumberjack | `go get github.com/oekit/logx/sink@v0.1.1` |
+| `./hlog/` | `github.com/oekit/logx/hlog` | Hertz hlog 后端适配 | cloudwego/hertz | `go get github.com/oekit/logx/hlog@v0.1.10` |
+| `./hertzlog/` | `github.com/oekit/logx/hertzlog` | hertz-contrib logrus/zap/zerolog/slog 桥接 | hertz + hertz-contrib/logger/* + logrus/zap/zerolog | `go get github.com/oekit/logx/hertzlog@v0.1.1` |
+| `./kitexlog/` | `github.com/oekit/logx/kitexlog` | Kitex klog→logx 桥接（自 oekit/kitex 迁入） | cloudwego/kitex | `go get github.com/oekit/logx/kitexlog@v0.1.10` |
 
 **嵌套模块 tag 约定**（Go modules 子路径 tag 标准）：根模块 tag `vX.Y.Z`；
 嵌套模块 tag `<子目录>/vX.Y.Z`，如 `hlog/v0.1.0`、`hertzlog/v0.1.0`、`kitexlog/v0.1.0`。
