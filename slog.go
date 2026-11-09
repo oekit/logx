@@ -224,7 +224,12 @@ func (l *slogLogger) emitAt(ctx context.Context, level Level, msg string, pc uin
 			"level":      LevelString(level),
 			"message":    msg,
 			"marshalErr": err.Error(),
-			"rawKv":      fmt.Sprint(keysAndValues...),
+			// rawKv 走 FormatKeysAndValues（#136）：此前 fmt.Sprint 直接
+			// 拼接，键是 string 时相邻操作数不加空格，键值糊成一体
+			// （"nanNaNok1"）——降级记录恰恰是排障最需要可读的那条，
+			// 必须能按 k=v 读；FormatKeysAndValues 产出 "k1=v1 k2=v2"
+			// 且奇数长度补 (MISSING)，与 std/hlog 后端的 kv 渲染同一口径。
+			"rawKv": FormatKeysAndValues(keysAndValues...),
 		}
 		// 降级不脱钩（#100）：关联字段一并带上——service/trace_id/caller 取自
 		// 上方已写入 record 的框架字段，WithAttrs 持久属性逐键平铺（值统一转
