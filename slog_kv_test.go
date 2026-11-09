@@ -1,10 +1,11 @@
 package logx
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-
+	stdlog "log"
 	"math"
 	"strings"
 	"testing"
@@ -124,4 +125,95 @@ func TestSlogLogger_FallbackRawKvMissingSlot(t *testing.T) {
 	NewSlogLogger("svc").Error("boom", "k1", math.NaN(), "lonely")
 	out := read()
 	assertRecordField(t, out, "rawKv", "k1=NaN lonely=(MISSING)")
+}
+
+// ---- #137：Error() panic 隔离 ----
+
+// panicErr 是 Error() 实现 panic 的 evil error（#137 复现形态）。
+type panicErr struct{}
+
+func (panicErr) Error() string { panic("Error() explodes") }
+
+// mustNotPanic 执行 fn，panic 逃逸则让测试失败并带上 panic 值。
+func mustNotPanic(t *testing.T, name string, fn func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("%s: panic 逃逸出日志调用点（#137）: %v", name, r)
+		}
+	}()
+	fn()
+}
+
+// TestLogValue_ErrorPanicIsolated 单元钉住 #137：logValue 对 Error() panic
+// 的 error 降级为占位串，不向上传播；普通 error 渲染不受影响。
+func TestLogValue_ErrorPanicIsolated(t *testing.T) {
+	if got := logValue(panicErr{}); got != "<error.String panicked: Error() explodes>" {
+		t.Fatalf("logValue(panicErr{}) = %q, want panic 隔离占位串", got)
+	}
+	if got := logValue(errors.New("normal")); got != "normal" {
+		t.Fatalf("普通 error 渲染不受影响: got %q", got)
+	}
+}
+
+// TestSlogLogger_ErrorValuePanicDoesNotEscape 端到端钉住 #137：同一 error
+// 值在 slog 后端的三条路径（内置 JSON、注入 Handler、WithAttrs 持久属性）
+// 上都让日志调用正常返回且落占位串——此前 panic 从序列化阶段直接逃逸出
+// 日志调用点打崩调用方 goroutine，且与 std 后端行为分裂（std 走 fmt 恒
+// 正常返回）。
+func TestSlogLogger_ErrorValuePanicDoesNotEscape(t *testing.T) {
+	restore := setTestExtractor()
+	defer restore()
+
+	const want = "<error.String panicked: Error() explodes>"
+
+	// 内置 JSON 路径
+	mustNotPanic(t, "内置 JSON 路径", func() {
+		read, _ := captureStdout(t)
+		l := NewSlogLogger("probe")
+		l.Error("boom", ErrKey, panicErr{})
+		out := read()
+		assertRecordField(t, out, "err", want)
+	})
+
+	// 注入 Handler 路径
+	h := newCaptureHandler()
+	lh := NewSlogLogger("probe", WithHandler(h))
+	mustNotPanic(t, "注入 Handler 路径", func() { lh.Error("boom", ErrKey, panicErr{}) })
+	recs := h.snapshot()
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record, got %d", len(recs))
+	}
+	if v, ok := recs[0]["err"]; !ok || fmt.Sprint(v) != want {
+		t.Fatalf("Handler 路径 err = %v, want %q", v, want)
+	}
+
+	// WithAttrs 持久属性路径（内置 JSON）
+	mustNotPanic(t, "WithAttrs 持久属性路径", func() {
+		read, _ := captureStdout(t)
+		la := NewSlogLogger("probe").WithAttrs(Attr{Key: ErrKey, Value: panicErr{}})
+		la.Info("boom")
+		out := read()
+		assertRecordField(t, out, "err", want)
+	})
+}
+
+// TestStdLogger_ErrorValuePanicStillContained std 后端回归护栏（#137）：
+// fmt 把 Error() 的 panic 收敛成 %!v(PANIC=...) 字面量、日志调用正常返回
+// ——修复后两后端对同一输入都不再让 panic 逃逸，行为重新一致。
+func TestStdLogger_ErrorValuePanicStillContained(t *testing.T) {
+	restore := setTestExtractor()
+	defer restore()
+
+	var buf bytes.Buffer
+	oldWriter := stdlog.Writer()
+	stdlog.SetOutput(&buf)
+	defer stdlog.SetOutput(oldWriter)
+
+	mustNotPanic(t, "std 后端", func() {
+		NewStdLogger("probe").Error("boom", ErrKey, panicErr{})
+	})
+	if !strings.Contains(buf.String(), "%!v(PANIC=") {
+		t.Fatalf("std 后端应把 panic 收敛为 %%!v(PANIC=...) 字面量, got: %s", buf.String())
+	}
 }

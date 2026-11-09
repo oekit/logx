@@ -410,11 +410,30 @@ func slogLevel(level Level) slog.Level {
 // 对多数 error 实现（fmt.wrapError、*errors.errorString、包装链等）无导出字段，
 // 会渲染成 "{}"，整条错误日志丢掉原因；与 log/slog JSONHandler 的 error 处理
 // 对齐（issue #2）。nil（未类型化）不经此路径，原样保留为 null。
+//
+// Error() 的 panic 在 errString 内隔离（#137）：日志组件是最不该把调用方
+// 打挂的一层——此前 panic 从日志调用点直接逃逸（一次日志调用打崩整个
+// 请求/协程），且与 std 后端行为分裂（std 走 fmt，fmt 自己把 Error() 的
+// panic 收敛成 %!v(PANIC=...) 字面量、日志调用正常返回）。
 func logValue(v any) any {
 	if err, ok := v.(error); ok {
-		return err.Error()
+		return errString(err)
 	}
 	return v
+}
+
+// errString 取 err.Error() 文本并对 panic 隔离（#137）：Error() 实现里会
+// panic 的 error 值（从 map 取值后转换、断言失败后包装的类型、带 nil 内嵌
+// 指针的类型等）降级为占位串，日志调用正常返回。范式对齐 core/chain
+// reportIsolated：保住调用方 > 完整渲染；占位串里带上 panic 值，异常现场
+// 仍可 grep 定位到是哪个 error 实现炸的。
+func errString(err error) (s string) {
+	defer func() {
+		if r := recover(); r != nil {
+			s = fmt.Sprintf("<error.String panicked: %v>", r)
+		}
+	}()
+	return err.Error()
 }
 
 // callerSkipFiles 存放需跳过 caller 归属的源文件绝对路径（由 SkipCallerFiles 写入）。
