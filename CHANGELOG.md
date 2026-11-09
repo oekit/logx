@@ -2,6 +2,14 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.9.0] — 2026-11-10
+
+- - feat: ErrAttrs——pkg/errors KVCarrier 的 slog.Attr 结构化出口，遍历语义对齐 KvFromChain（#135）
+- - fix(slog): 序列化降级 rawKv 经 FormatKeysAndValues 补回键值分隔符与 MISSING 档（#136）
+- - fix(slog): Error() panic 经 errString 就地隔离，panic 不再逃逸日志调用点（#137）
+
+关联问题单：logx#135、logx#136、logx#137。
+
 ## [v0.8.12] — 2026-11-09
 
 - fix(trace): WithGroup 继承 withKeys——With(键).WithGroup(组) 不再双 trace_id（#129）
