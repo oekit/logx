@@ -2,6 +2,10 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.9.2] — 2026-11-10
+
+- - build: 依赖地板对齐（第二轮发版后 floor sync，无代码变更）
+
 ## [kitexlog/v0.1.11] — 2026-11-10
 
 - - build: 依赖地板对齐——core v0.13.5 → v0.13.6（floor sync，无代码变更）
