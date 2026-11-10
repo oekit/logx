@@ -2,6 +2,10 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.9.1] — 2026-11-10
+
+- - build: 依赖地板对齐——core v0.13.5 → v0.13.6（floor sync，无代码变更）
+
 ## [v0.9.0] — 2026-11-10
 
 - - feat: ErrAttrs——pkg/errors KVCarrier 的 slog.Attr 结构化出口，遍历语义对齐 KvFromChain（#135）
