@@ -173,18 +173,18 @@ func TestNewSlogLogger_LevelPriority(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "ERROR")
 
 	l := NewSlogLogger("svc")
-	if l.(*slogLogger).Level != LevelError {
+	if l.(*slogLogger).Level.Load() != LevelError {
 		t.Errorf("LOG_LEVEL should win over default, got %v", l.(*slogLogger).Level)
 	}
 
 	l = NewSlogLogger("svc", WithLevel(LevelDebug))
-	if l.(*slogLogger).Level != LevelDebug {
+	if l.(*slogLogger).Level.Load() != LevelDebug {
 		t.Errorf("WithLevel should win over LOG_LEVEL, got %v", l.(*slogLogger).Level)
 	}
 
 	t.Setenv("LOG_LEVEL", "")
 	l = NewSlogLogger("svc")
-	if l.(*slogLogger).Level != LevelInfo {
+	if l.(*slogLogger).Level.Load() != LevelInfo {
 		t.Errorf("default should be LevelInfo, got %v", l.(*slogLogger).Level)
 	}
 }

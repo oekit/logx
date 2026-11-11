@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync/atomic"
 )
 
 // FilterOption 配置 WithFilter 的过滤行为。
@@ -73,38 +72,34 @@ func WithFilter(l Logger, opts ...FilterOption) Logger {
 	for _, opt := range opts {
 		opt(cfg)
 	}
-	return &filterLogger{base: l, cfg: cfg}
+	return &filterLogger{base: l, cfg: cfg, gate: &levelGate{}}
 }
 
 type filterLogger struct {
 	base Logger
 	cfg  *filterConfig
-	// levelOverride 是实例级级别下限（#81）：SetLevel 写入这里，不透传共享的
+	// gate 是实例级级别下限（#81）：SetLevel 写入这里，不透传共享的
 	// base——此前 filterLogger.SetLevel 直接改 base（base 可能是全局默认
 	// logger 或父 logger），级别调整半径远大于「子 logger 独立配置」的直觉。
 	// With* 派生时把当前下限值拷贝给子实例（#101：继承派生时刻的下限、
 	// 派生后各自独立——与 std/slog/hlog 后端 clone 拷 Level 对齐；此前
 	// 派生归零，父实例收紧后子 logger 静默回默认档）。
-	// 存 Level+1（0 表示未设置，区分未设置与 LevelDebug 零值）。
-	levelOverride atomic.Int32
+	// 编码约定（存 Level+1、0=未设置）与 pass/set/derive 实现收敛在
+	// wrapper.go 的 levelGate（#162），与 delegatingLogger 共用。
+	gate *levelGate
 }
 
 // derive 派生子 logger 时继承父实例的级别下限（#101）：拷贝当前值，
 // 派生后父子各自独立（后端 clone 拷 Level 同语义）。
 func (f *filterLogger) derive(child *filterLogger) *filterLogger {
-	if v := f.levelOverride.Load(); v != 0 {
-		child.levelOverride.Store(v)
-	}
+	child.gate = f.gate.deriveChild()
 	return child
 }
 
 // pass 实例级下限预检：已设置下限且事件级别低于下限时提前丢弃
 // （base 自身的级别过滤仍生效，有效级别取两者更严者）。
 func (f *filterLogger) pass(level Level) bool {
-	if v := f.levelOverride.Load(); v != 0 && Level(v-1) > level {
-		return false
-	}
-	return true
+	return f.gate.pass(level)
 }
 
 // filterKvs 返回脱敏后的 kv 切片（不入参原切片）。
@@ -127,6 +122,17 @@ func (f *filterLogger) filterKvs(kvs []any) []any {
 // dropped 报告记录是否应被丢弃。
 func (f *filterLogger) dropped(msg string, kvs []any) bool {
 	return f.cfg.drop != nil && f.cfg.drop(msg, kvs)
+}
+
+// droppedf 评估 printf 路径的丢弃判定（#169）：FilterFunc 未配置时**不执行**
+// fmt.Sprintf。此前 Sprintf 是 dropped 的实参、先于其内部的 drop != nil 短路
+// 无条件求值——只配 FilterKey（godoc 给的典型用法）时每次 Ctx*f 都白付一次
+// 完整格式化，随后 base.Debugf 再格式化第二次（双重格式化 + 双重分配）。
+func (f *filterLogger) droppedf(format string, args ...any) bool {
+	if f.cfg.drop == nil {
+		return false
+	}
+	return f.cfg.drop(fmt.Sprintf(format, args...), nil)
 }
 
 // 四组日志方法前置实例级下限预检（#81）：SetLevel 记录在 wrapper 自身，
@@ -180,7 +186,7 @@ func (f *filterLogger) Debugf(format string, args ...any) {
 	if !f.pass(LevelDebug) {
 		return
 	}
-	if f.dropped(fmt.Sprintf(format, args...), nil) {
+	if f.droppedf(format, args...) {
 		return
 	}
 	f.base.Debugf(format, args...)
@@ -190,7 +196,7 @@ func (f *filterLogger) Infof(format string, args ...any) {
 	if !f.pass(LevelInfo) {
 		return
 	}
-	if f.dropped(fmt.Sprintf(format, args...), nil) {
+	if f.droppedf(format, args...) {
 		return
 	}
 	f.base.Infof(format, args...)
@@ -200,7 +206,7 @@ func (f *filterLogger) Warnf(format string, args ...any) {
 	if !f.pass(LevelWarn) {
 		return
 	}
-	if f.dropped(fmt.Sprintf(format, args...), nil) {
+	if f.droppedf(format, args...) {
 		return
 	}
 	f.base.Warnf(format, args...)
@@ -210,7 +216,7 @@ func (f *filterLogger) Errorf(format string, args ...any) {
 	if !f.pass(LevelError) {
 		return
 	}
-	if f.dropped(fmt.Sprintf(format, args...), nil) {
+	if f.droppedf(format, args...) {
 		return
 	}
 	f.base.Errorf(format, args...)
@@ -264,7 +270,7 @@ func (f *filterLogger) CtxDebugf(ctx context.Context, format string, args ...any
 	if !f.pass(LevelDebug) {
 		return
 	}
-	if f.dropped(fmt.Sprintf(format, args...), nil) {
+	if f.droppedf(format, args...) {
 		return
 	}
 	f.base.CtxDebugf(ctx, format, args...)
@@ -274,7 +280,7 @@ func (f *filterLogger) CtxInfof(ctx context.Context, format string, args ...any)
 	if !f.pass(LevelInfo) {
 		return
 	}
-	if f.dropped(fmt.Sprintf(format, args...), nil) {
+	if f.droppedf(format, args...) {
 		return
 	}
 	f.base.CtxInfof(ctx, format, args...)
@@ -284,7 +290,7 @@ func (f *filterLogger) CtxWarnf(ctx context.Context, format string, args ...any)
 	if !f.pass(LevelWarn) {
 		return
 	}
-	if f.dropped(fmt.Sprintf(format, args...), nil) {
+	if f.droppedf(format, args...) {
 		return
 	}
 	f.base.CtxWarnf(ctx, format, args...)
@@ -294,7 +300,7 @@ func (f *filterLogger) CtxErrorf(ctx context.Context, format string, args ...any
 	if !f.pass(LevelError) {
 		return
 	}
-	if f.dropped(fmt.Sprintf(format, args...), nil) {
+	if f.droppedf(format, args...) {
 		return
 	}
 	f.base.CtxErrorf(ctx, format, args...)
@@ -365,5 +371,5 @@ func (f *filterLogger) Unwrap() Logger { return f.base }
 // 边界（与 Delegating.SetLevel 同一声明）：本下限与 base 自身级别取更严者
 // 生效——wrapper 只能收紧，不能放宽（base 自己的 ShouldLog 仍拦截）。
 func (f *filterLogger) SetLevel(level Level) {
-	f.levelOverride.Store(int32(level) + 1)
+	f.gate.set(level)
 }

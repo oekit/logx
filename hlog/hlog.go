@@ -41,13 +41,38 @@ type hlogLogger struct {
 	logx.BaseLogger
 }
 
+// HlogOption 是 hlog 后端的函数选项（#167，与 SlogOption/StdOption 同形）。
+type HlogOption func(*hlogLogger)
+
+// WithHlogLevel 显式指定日志级别，优先级高于 LOG_LEVEL 环境变量。
+// 构造后仍可 SetLevel 运行期调级（会同步 hlog 进程全局级别）。
+func WithHlogLevel(level logx.Level) HlogOption {
+	return func(l *hlogLogger) { l.Level.Store(level) }
+}
+
 // NewHlogLogger 创建带 service name 的 hlog Logger。
 // 实例级别读 LOG_LEVEL 环境变量（#66，缺省 LevelInfo）——此前实例级别硬编码
 // LevelInfo：LOG_LEVEL=DEBUG 下 Debug 被实例 ShouldLog 拦截、=OFF 下 Info 照打，
 // README/doc/AGENTS 三处「LOG_LEVEL 统一控制所有后端」的承诺双双落空。
+//
+// #167：需要显式级别参数时用 NewHlogLoggerWith(service, WithHlogLevel(...))
+// ——三个后端构造器自此都有函数选项形态。
 func NewHlogLogger(service string) logx.Logger {
+	return NewHlogLoggerWith(service)
+}
+
+// NewHlogLoggerWith 以函数选项创建 hlog 后端（#167，与 NewSlogLogger 同形）。
+//
+// 级别优先级：WithHlogLevel 显式选项 > LOG_LEVEL 环境变量 > 默认 LevelInfo
+// （三后端文档口径一致）。
+func NewHlogLoggerWith(service string, opts ...HlogOption) logx.Logger {
 	l := &hlogLogger{BaseLogger: logx.NewBaseLogger(service,
 		logx.ParseLogLevelOr(os.Getenv("LOG_LEVEL"), logx.LevelInfo))}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(l)
+		}
+	}
 	l.initHlogLevel()
 	return l
 }
@@ -55,32 +80,34 @@ func NewHlogLogger(service string) logx.Logger {
 // IsHlogLogger 实现 logx.HlogBacked 标记接口，供 IsHlogBacked 运行时检查。
 func (l *hlogLogger) IsHlogLogger() {}
 
+// toHlogLevel 将 logx.Level 映射为 hlog.Level（#161：initHlogLevel/SetLevel
+// 此前各持一份逐字相同的 switch，收敛为共用一份）。
+// hlog 无 OFF 档：LevelOff 落到 Error——比 OFF 更严的全局档不存在，由实例
+// ShouldLog 兜底拦截（#66/#102）。
+func toHlogLevel(level logx.Level) hlog.Level {
+	switch level {
+	case logx.LevelDebug:
+		return hlog.LevelDebug
+	case logx.LevelWarn:
+		return hlog.LevelWarn
+	case logx.LevelError, logx.LevelOff:
+		return hlog.LevelError
+	default:
+		return hlog.LevelInfo
+	}
+}
+
 // initHlogLevel 根据实例级别设置 hlog 进程全局级别（hlog 无实例级级别）。
 // 写全局级别持写锁（#96）：构造新实例可能与其他 hlog 实例的并发日志竞态。
 func (l *hlogLogger) initHlogLevel() {
 	hlogMu.Lock()
 	defer hlogMu.Unlock()
-	switch l.Level {
-	case logx.LevelDebug:
-		hlog.SetLevel(hlog.LevelDebug)
-	case logx.LevelWarn:
-		hlog.SetLevel(hlog.LevelWarn)
-	case logx.LevelError:
-		hlog.SetLevel(hlog.LevelError)
-	case logx.LevelOff:
-		// hlog 无 OFF 档：降到 Error 以外的最高档之后由实例 ShouldLog 兜底拦截
-		// （#66：此前 switch 无 OFF 分支，OFF 静默落 Info——「OFF 配置静默照打」）
-		hlog.SetLevel(hlog.LevelError)
-	default:
-		hlog.SetLevel(hlog.LevelInfo)
-	}
+	hlog.SetLevel(toHlogLevel(l.Level.Load()))
 }
 
 func (l *hlogLogger) withBase(apply func(cp *logx.BaseLogger)) logx.Logger {
-	cp := l.Snapshot()
-	apply(&cp)
-	// 逐字段重建：直接 BaseLogger: cp 会连同内部 Mutex 一起拷贝
-	return &hlogLogger{BaseLogger: logx.BaseLogger{Service: cp.Service, Level: cp.Level, Attrs: cp.Attrs, Ctx: cp.Ctx}}
+	// #164：Snapshot + apply + 逐字段重建上提到 logx.BaseLogger.Derive
+	return &hlogLogger{BaseLogger: l.Derive(apply)}
 }
 
 func (l *hlogLogger) WithCtx(ctx context.Context) logx.Logger {
@@ -113,31 +140,7 @@ func (l *hlogLogger) SetLevel(level logx.Level) {
 	l.BaseLogger.SetLevel(level)
 	hlogMu.Lock()
 	defer hlogMu.Unlock()
-	switch level {
-	case logx.LevelDebug:
-		hlog.SetLevel(hlog.LevelDebug)
-	case logx.LevelWarn:
-		hlog.SetLevel(hlog.LevelWarn)
-	case logx.LevelError:
-		hlog.SetLevel(hlog.LevelError)
-	case logx.LevelOff:
-		// 与 initHlogLevel 对齐（#102）：hlog 无 OFF 档，降到 Error 之后由
-		// 实例 ShouldLog 兜底拦截——此前缺此分支落 default，SetLevel(OFF)
-		// 反而把 hertz 全局级别从 Error 放宽到 Info，「关日志」变成「开日志」。
-		hlog.SetLevel(hlog.LevelError)
-	default:
-		hlog.SetLevel(hlog.LevelInfo)
-	}
-}
-
-// orBackground 统一 Ctx* 入口的 nil ctx 兜底（#97，对齐 logx 侧
-// EffectiveCtx/ctxOrBackground 口径）：注册提取器后 nil ctx 透传给
-// ExtractTrace/hlog 会 nil 解引用 panic。
-func orBackground(ctx context.Context) context.Context {
-	if ctx != nil {
-		return ctx
-	}
-	return context.Background()
+	hlog.SetLevel(toHlogLevel(level))
 }
 
 // attrPrefix 将持久化属性格式化为可读前缀。
@@ -159,6 +162,24 @@ func (l *hlogLogger) formatKV(keysAndValues ...any) string {
 		return attrStr
 	}
 	return attrStr + " " + kvStr
+}
+
+// emitf 是 8 个 Ctx* 方法收敛后的唯一公共方法体（#161）：ShouldLog 判级、
+// nil ctx 兜底（#97，经根包导出的 logx.CtxOrBackground 复用，#168 删除
+// 本地 orBackground 副本）、hlog 全局级别读锁（#96）、trace 提取——这段
+// 前置此前逐字重复 8 次，#96/#97 两次修复都被迫改 8 处，此后同类修复
+// （如 trace 提取口径调整）只改这里。
+//
+// render 在持锁窗口内完成最终格式化并调用对应级别的 hlog 目标函数；闭包
+// 把消息格式化推迟到 ShouldLog 判级之后，被过滤的调用不付任何格式化成本。
+func (l *hlogLogger) emitf(ctx context.Context, level logx.Level, render func(ctx context.Context, traceID string)) {
+	if !l.ShouldLog(level) {
+		return
+	}
+	ctx = logx.CtxOrBackground(ctx) // #97：nil ctx 统一兜底
+	hlogMu.RLock()
+	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
+	render(ctx, logx.ExtractTrace(ctx))
 }
 
 // 结构化风格方法（绑定 ctx 时自动提取 trace_id）
@@ -200,63 +221,47 @@ func (l *hlogLogger) Errorf(format string, args ...any) {
 // 带 Context 的结构化风格方法
 
 func (l *hlogLogger) CtxDebug(ctx context.Context, msg string, keysAndValues ...any) {
-	if !l.ShouldLog(logx.LevelDebug) {
-		return
-	}
-	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
-	hlogMu.RLock()
-	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
-	traceID := logx.ExtractTrace(ctx)
-	if traceID != "" {
-		hlog.CtxDebugf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
-	} else {
-		hlog.CtxDebugf(ctx, "%s %s %s", l.Prefix(), msg, l.formatKV(keysAndValues...))
-	}
+	l.emitf(ctx, logx.LevelDebug, func(ctx context.Context, traceID string) {
+		kv := l.formatKV(keysAndValues...)
+		if traceID != "" {
+			hlog.CtxDebugf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, kv)
+			return
+		}
+		hlog.CtxDebugf(ctx, "%s %s %s", l.Prefix(), msg, kv)
+	})
 }
 
 func (l *hlogLogger) CtxInfo(ctx context.Context, msg string, keysAndValues ...any) {
-	if !l.ShouldLog(logx.LevelInfo) {
-		return
-	}
-	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
-	hlogMu.RLock()
-	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
-	traceID := logx.ExtractTrace(ctx)
-	if traceID != "" {
-		hlog.CtxInfof(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
-	} else {
-		hlog.CtxInfof(ctx, "%s %s %s", l.Prefix(), msg, l.formatKV(keysAndValues...))
-	}
+	l.emitf(ctx, logx.LevelInfo, func(ctx context.Context, traceID string) {
+		kv := l.formatKV(keysAndValues...)
+		if traceID != "" {
+			hlog.CtxInfof(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, kv)
+			return
+		}
+		hlog.CtxInfof(ctx, "%s %s %s", l.Prefix(), msg, kv)
+	})
 }
 
 func (l *hlogLogger) CtxWarn(ctx context.Context, msg string, keysAndValues ...any) {
-	if !l.ShouldLog(logx.LevelWarn) {
-		return
-	}
-	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
-	hlogMu.RLock()
-	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
-	traceID := logx.ExtractTrace(ctx)
-	if traceID != "" {
-		hlog.CtxWarnf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
-	} else {
-		hlog.CtxWarnf(ctx, "%s %s %s", l.Prefix(), msg, l.formatKV(keysAndValues...))
-	}
+	l.emitf(ctx, logx.LevelWarn, func(ctx context.Context, traceID string) {
+		kv := l.formatKV(keysAndValues...)
+		if traceID != "" {
+			hlog.CtxWarnf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, kv)
+			return
+		}
+		hlog.CtxWarnf(ctx, "%s %s %s", l.Prefix(), msg, kv)
+	})
 }
 
 func (l *hlogLogger) CtxError(ctx context.Context, msg string, keysAndValues ...any) {
-	if !l.ShouldLog(logx.LevelError) {
-		return
-	}
-	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
-	hlogMu.RLock()
-	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
-	traceID := logx.ExtractTrace(ctx)
-	if traceID != "" {
-		hlog.CtxErrorf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, l.formatKV(keysAndValues...))
-	} else {
-		hlog.CtxErrorf(ctx, "%s %s %s", l.Prefix(), msg, l.formatKV(keysAndValues...))
-	}
+	l.emitf(ctx, logx.LevelError, func(ctx context.Context, traceID string) {
+		kv := l.formatKV(keysAndValues...)
+		if traceID != "" {
+			hlog.CtxErrorf(ctx, "[trace=%s] %s %s %s", traceID, l.Prefix(), msg, kv)
+			return
+		}
+		hlog.CtxErrorf(ctx, "%s %s %s", l.Prefix(), msg, kv)
+	})
 }
 
 // 带 Context 的 printf 风格方法
@@ -267,65 +272,45 @@ func (l *hlogLogger) CtxError(ctx context.Context, msg string, keysAndValues ...
 // （formatKV）口径一致：属性拼在消息之后。
 
 func (l *hlogLogger) CtxDebugf(ctx context.Context, format string, args ...any) {
-	if !l.ShouldLog(logx.LevelDebug) {
-		return
-	}
-	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
-	hlogMu.RLock()
-	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
-	traceID := logx.ExtractTrace(ctx)
-	msg := logx.FormatWithTraceID(traceID, format, args...)
-	if pfx := l.attrPrefix(); pfx != "" {
-		hlog.CtxDebugf(ctx, "%s %s %s", l.Prefix(), msg, pfx)
-		return
-	}
-	hlog.CtxDebugf(ctx, "%s %s", l.Prefix(), msg)
+	l.emitf(ctx, logx.LevelDebug, func(ctx context.Context, traceID string) {
+		msg := logx.FormatWithTraceID(traceID, format, args...)
+		if pfx := l.attrPrefix(); pfx != "" {
+			hlog.CtxDebugf(ctx, "%s %s %s", l.Prefix(), msg, pfx)
+			return
+		}
+		hlog.CtxDebugf(ctx, "%s %s", l.Prefix(), msg)
+	})
 }
 
 func (l *hlogLogger) CtxInfof(ctx context.Context, format string, args ...any) {
-	if !l.ShouldLog(logx.LevelInfo) {
-		return
-	}
-	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
-	hlogMu.RLock()
-	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
-	traceID := logx.ExtractTrace(ctx)
-	msg := logx.FormatWithTraceID(traceID, format, args...)
-	if pfx := l.attrPrefix(); pfx != "" {
-		hlog.CtxInfof(ctx, "%s %s %s", l.Prefix(), msg, pfx)
-		return
-	}
-	hlog.CtxInfof(ctx, "%s %s", l.Prefix(), msg)
+	l.emitf(ctx, logx.LevelInfo, func(ctx context.Context, traceID string) {
+		msg := logx.FormatWithTraceID(traceID, format, args...)
+		if pfx := l.attrPrefix(); pfx != "" {
+			hlog.CtxInfof(ctx, "%s %s %s", l.Prefix(), msg, pfx)
+			return
+		}
+		hlog.CtxInfof(ctx, "%s %s", l.Prefix(), msg)
+	})
 }
 
 func (l *hlogLogger) CtxWarnf(ctx context.Context, format string, args ...any) {
-	if !l.ShouldLog(logx.LevelWarn) {
-		return
-	}
-	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
-	hlogMu.RLock()
-	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
-	traceID := logx.ExtractTrace(ctx)
-	msg := logx.FormatWithTraceID(traceID, format, args...)
-	if pfx := l.attrPrefix(); pfx != "" {
-		hlog.CtxWarnf(ctx, "%s %s %s", l.Prefix(), msg, pfx)
-		return
-	}
-	hlog.CtxWarnf(ctx, "%s %s", l.Prefix(), msg)
+	l.emitf(ctx, logx.LevelWarn, func(ctx context.Context, traceID string) {
+		msg := logx.FormatWithTraceID(traceID, format, args...)
+		if pfx := l.attrPrefix(); pfx != "" {
+			hlog.CtxWarnf(ctx, "%s %s %s", l.Prefix(), msg, pfx)
+			return
+		}
+		hlog.CtxWarnf(ctx, "%s %s", l.Prefix(), msg)
+	})
 }
 
 func (l *hlogLogger) CtxErrorf(ctx context.Context, format string, args ...any) {
-	if !l.ShouldLog(logx.LevelError) {
-		return
-	}
-	ctx = orBackground(ctx) // #97：nil ctx 统一兜底
-	hlogMu.RLock()
-	defer hlogMu.RUnlock() // #96：读 hertz 全局级别与 SetLevel 的写互斥
-	traceID := logx.ExtractTrace(ctx)
-	msg := logx.FormatWithTraceID(traceID, format, args...)
-	if pfx := l.attrPrefix(); pfx != "" {
-		hlog.CtxErrorf(ctx, "%s %s %s", l.Prefix(), msg, pfx)
-		return
-	}
-	hlog.CtxErrorf(ctx, "%s %s", l.Prefix(), msg)
+	l.emitf(ctx, logx.LevelError, func(ctx context.Context, traceID string) {
+		msg := logx.FormatWithTraceID(traceID, format, args...)
+		if pfx := l.attrPrefix(); pfx != "" {
+			hlog.CtxErrorf(ctx, "%s %s %s", l.Prefix(), msg, pfx)
+			return
+		}
+		hlog.CtxErrorf(ctx, "%s %s", l.Prefix(), msg)
+	})
 }

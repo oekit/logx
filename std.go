@@ -57,24 +57,46 @@ func (stdLogDynamicWriter) Write(p []byte) (int, error) {
 // ——与 stdlib 日志对同一目标全互斥。
 var stdWriter = log.New(stdLogDynamicWriter{}, "", 0)
 
-// NewStdLogger 创建标准库实现的 Logger。
-// 无 level 参数时默认 LevelInfo（与文档及 NewSlogLogger 一致；
-// 原先误用 LevelDebug=iota 零值，见 #11）。
-// 传入 level[0] 可显式指定。
-func NewStdLogger(service string, level ...Level) Logger {
-	l := &stdLogger{BaseLogger: BaseLogger{Service: service,
-		Level: ParseLogLevelOr(os.Getenv("LOG_LEVEL"), LevelInfo)}} // #66：对齐 init 默认实例与 slog 后端
-	if len(level) > 0 {
-		l.Level = level[0]
+// StdOption 是 std 后端的函数选项（#167，与 SlogOption 同形）。
+type StdOption func(*stdLogger)
+
+// WithStdLevel 显式指定日志级别，优先级高于 LOG_LEVEL 环境变量。
+// 构造后仍可 SetLevel 运行期调级。
+func WithStdLevel(level Level) StdOption {
+	return func(l *stdLogger) { l.Level.Store(level) }
+}
+
+// NewStdLoggerWith 以函数选项创建 std 后端（#167）：与 NewSlogLogger 同形，
+// 三个后端构造器自此都有函数选项形态（签名面统一）。
+//
+// 级别优先级：WithStdLevel 显式选项 > LOG_LEVEL 环境变量 > 默认 LevelInfo
+// （三后端文档口径一致）。
+func NewStdLoggerWith(service string, opts ...StdOption) Logger {
+	l := &stdLogger{BaseLogger: NewBaseLogger(service,
+		ParseLogLevelOr(os.Getenv("LOG_LEVEL"), LevelInfo))} // #66：对齐 init 默认实例与 slog 后端
+	for _, opt := range opts {
+		if opt != nil {
+			opt(l)
+		}
 	}
 	return l
 }
 
+// NewStdLogger 创建标准库实现的 Logger（variadic 兼容形态，#167：内部转发
+// NewStdLoggerWith，既有调用不受影响）。
+// 无 level 参数时默认 LevelInfo（与文档及 NewSlogLogger 一致；
+// 原先误用 LevelDebug=iota 零值，见 #11）。
+// 传入 level[0] 可显式指定。
+func NewStdLogger(service string, level ...Level) Logger {
+	if len(level) == 0 {
+		return NewStdLoggerWith(service)
+	}
+	return NewStdLoggerWith(service, WithStdLevel(level[0]))
+}
+
 func (l *stdLogger) withBase(apply func(cp *BaseLogger)) Logger {
-	cp := l.Snapshot()
-	apply(&cp)
-	// 逐字段重建：直接 BaseLogger: cp 会连同内部 Mutex 一起拷贝（vet lock copy 报错）
-	return &stdLogger{BaseLogger: BaseLogger{Service: cp.Service, Level: cp.Level, Attrs: cp.Attrs, Ctx: cp.Ctx}}
+	// #164：Snapshot + apply + 逐字段重建上提到 BaseLogger.Derive
+	return &stdLogger{BaseLogger: l.Derive(apply)}
 }
 
 func (l *stdLogger) WithCtx(ctx context.Context) Logger {
@@ -95,19 +117,24 @@ func (l *stdLogger) WithGroup(name string) Logger {
 	return l.withBase(func(cp *BaseLogger) {})
 }
 
+// buildPrefix 构造 std 后端的行前缀（#165）：log/logf 此前各持一份相同的
+// 「毫秒时间戳 + 级别名 + service 前缀 + trace 分支」5 行构造，trace 提取
+// 口径调整时要改两处。收敛到此共用。
+func (l *stdLogger) buildPrefix(ctx context.Context, level Level) string {
+	ts := time.Now().Format("2006-01-02 15:04:05.000")
+	levelStr := LevelString(level)
+	if traceID := ExtractTrace(ctx); traceID != "" {
+		return fmt.Sprintf("%s [%s] [trace=%s] %s", ts, levelStr, traceID, l.Prefix())
+	}
+	return fmt.Sprintf("%s [%s] %s", ts, levelStr, l.Prefix())
+}
+
 func (l *stdLogger) log(level Level, ctx context.Context, msg string, keysAndValues ...any) {
-	ctx = ctxOrBackground(ctx) // #97：Ctx* 入参 nil ctx 统一兜底
+	ctx = CtxOrBackground(ctx) // #97：Ctx* 入参 nil ctx 统一兜底
 	if !l.ShouldLog(level) {
 		return
 	}
-	ts := time.Now().Format("2006-01-02 15:04:05.000")
-	levelStr := LevelString(level)
-
-	traceID := ExtractTrace(ctx)
-	prefix := fmt.Sprintf("%s [%s] %s", ts, levelStr, l.Prefix())
-	if traceID != "" {
-		prefix = fmt.Sprintf("%s [%s] [trace=%s] %s", ts, levelStr, traceID, l.Prefix())
-	}
+	prefix := l.buildPrefix(ctx, level)
 
 	kvStr := formatAttrsAndKV(l.Attrs, keysAndValues...)
 	if kvStr != "" {
@@ -131,26 +158,20 @@ func formatAttrsAndKV(attrs []Attr, keysAndValues ...any) string {
 }
 
 func (l *stdLogger) logf(level Level, ctx context.Context, format string, args ...any) {
-	ctx = ctxOrBackground(ctx) // #97：Ctx* 入参 nil ctx 统一兜底
+	ctx = CtxOrBackground(ctx) // #97：Ctx* 入参 nil ctx 统一兜底
 	if !l.ShouldLog(level) {
 		return
 	}
-	ts := time.Now().Format("2006-01-02 15:04:05.000")
-	levelStr := LevelString(level)
-
-	traceID := ExtractTrace(ctx)
-	prefix := fmt.Sprintf("%s [%s] %s", ts, levelStr, l.Prefix())
-	if traceID != "" {
-		prefix = fmt.Sprintf("%s [%s] [trace=%s] %s", ts, levelStr, traceID, l.Prefix())
-	}
+	prefix := l.buildPrefix(ctx, level)
 
 	msg := fmt.Sprintf(format, args...)
 	// printf 路径同样携带持久属性（#77）：此前 logf 不合并 l.Attrs——同一
 	// logger 上 Info 带 request_id、Infof 不带，字段面按方法族分裂，依赖
-	// 持久属性做审计/追踪的调用方在 printf 路径静默丢字段。与结构化路径
-	// （formatAttrsAndKV）口径一致：属性拼在消息之后。
-	if attrStr := FormatAttrs(l.Attrs...); attrStr != "" {
-		stdWriter.Printf("%s %s %s", prefix, msg, attrStr)
+	// 持久属性做审计/追踪的调用方在 printf 路径静默丢字段。
+	// #165：属性拼装与结构化路径（log）统一走 formatAttrsAndKV，消除
+	// printf/结构化两条路径的残留分叉（无 kv 参数时即纯属性串，输出不变）。
+	if kvStr := formatAttrsAndKV(l.Attrs); kvStr != "" {
+		stdWriter.Printf("%s %s %s", prefix, msg, kvStr)
 		return
 	}
 	stdWriter.Printf("%s %s", prefix, msg)

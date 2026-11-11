@@ -15,14 +15,14 @@ func TestHlogLogger_ReadsLogLevelEnv(t *testing.T) {
 
 	os.Setenv("LOG_LEVEL", "DEBUG")
 	l := NewHlogLogger("s").(*hlogLogger)
-	if l.Level != logx.LevelDebug {
-		t.Fatalf("LOG_LEVEL=DEBUG ⇒ LevelDebug, got %v", l.Level)
+	if l.Level.Load() != logx.LevelDebug {
+		t.Fatalf("LOG_LEVEL=DEBUG ⇒ LevelDebug, got %v", l.Level.Load())
 	}
 
 	os.Setenv("LOG_LEVEL", "OFF")
 	l = NewHlogLogger("s").(*hlogLogger)
-	if l.Level != logx.LevelOff {
-		t.Fatalf("LOG_LEVEL=OFF ⇒ LevelOff, got %v", l.Level)
+	if l.Level.Load() != logx.LevelOff {
+		t.Fatalf("LOG_LEVEL=OFF ⇒ LevelOff, got %v", l.Level.Load())
 	}
 	// hlog 无 OFF 档：进程全局级别抬到 Error 兜底（initHlogLevel OFF 分支），
 	// 输出面由实例 ShouldLog 拦截
@@ -35,7 +35,7 @@ func TestHlogLogger_ReadsLogLevelEnv(t *testing.T) {
 
 	os.Setenv("LOG_LEVEL", "INFO")
 	l = NewHlogLogger("s").(*hlogLogger)
-	if l.Level != logx.LevelInfo {
-		t.Fatalf("LOG_LEVEL=INFO ⇒ LevelInfo, got %v", l.Level)
+	if l.Level.Load() != logx.LevelInfo {
+		t.Fatalf("LOG_LEVEL=INFO ⇒ LevelInfo, got %v", l.Level.Load())
 	}
 }

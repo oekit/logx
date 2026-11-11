@@ -45,7 +45,7 @@ func TestIsHlogBacked_ThroughWrappers(t *testing.T) {
 	}
 
 	// audit 包装透传 inner 标记（in-package 构造）
-	if !IsHlogBacked(auditLogger{inner: base}) {
+	if !IsHlogBacked(auditLogger{Logger: base}) {
 		t.Errorf("auditLogger 包装 hlog 后端应可检出")
 	}
 
