@@ -267,9 +267,12 @@ func appendJSONValue(dst []byte, v any) ([]byte, error) {
 }
 
 // appendJSONString 追加一个 JSON 字符串字面量（含引号）。转义口径与
-// encoding/json 默认一致：HTML 转义开启（< > & → \u00xx）、非法 UTF-8
-// 以 U+FFFD 原字符落地、U+2028/U+2029 转义——字节同构由
-// TestAppendJSONString_MatchesEncodingJSON 对语料钉住。
+// encoding/json 默认一致：HTML 转义开启（< > & → \u00xx）、U+2028/U+2029
+// 转义——字节同构由 TestAppendJSONString_MatchesEncodingJSON 对语料钉住。
+// 非法 UTF-8 字节（日志里的罕见脏值）整体回退 json.Marshal：该边角的渲染
+// 随工具链演进有差异（go1.26 落 \ufffd 转义文本、go1.27 落 U+FFFD 原字符），
+// 手写快路径不自行规定口径，回退保证与构建工具链的 encoding/json 恒字节
+// 一致。
 func appendJSONString(dst []byte, s string) []byte {
 	const hex = "0123456789abcdef"
 	dst = append(dst, '"')
@@ -300,13 +303,13 @@ func appendJSONString(dst []byte, s string) []byte {
 		}
 		r, size := utf8.DecodeRuneInString(s[i:])
 		if r == utf8.RuneError && size == 1 {
-			// 非法 UTF-8：与 encoding/json 同口径落 U+FFFD（原字符，
-			// 非转义文本——与构建工具链的 json.Marshal 字节一致）
-			dst = append(dst, s[start:i]...)
-			dst = utf8.AppendRune(dst, utf8.RuneError)
-			i += size
-			start = i
-			continue
+			// 非法 UTF-8：罕见路径，回退 json.Marshal（含外层引号整个重编，
+			// 撤掉本函数已追加的开引号）
+			enc, err := json.Marshal(s)
+			if err != nil { // 字符串序列化不会失败；防御性保底
+				return append(dst, '"')
+			}
+			return append(dst[:len(dst)-1], enc...)
 		}
 		if r == '\u2028' || r == '\u2029' {
 			dst = append(dst, s[start:i]...)
