@@ -2,6 +2,36 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [kitexlog/v0.1.12] — 2026-11-12
+
+- **BREAKING**：BaseLogger.Level 字段改 AtomicLevel 原子存储，ShouldLog/Enabled 热路径免锁——直接读写 .Level 的代码需改 Level.Load()/SetLevel()（#171）。重构清零（2026-11-11 审查批次）：hlog 8 个 Ctx* 方法收敛 emitf + toHlogLevel 单源（#161）；级别闸门抽 levelGate、auditLogger 改接口嵌入（#162）；BaseLogger.Derive 上提派生重建（#164）；std buildPrefix 合并 log/logf 前缀构造（#165）；slog.go 拆 json/caller/audit（#166）；std/hlog 补函数选项构造器 NewStdLoggerWith/NewHlogLoggerWith（#167）；导出 CtxOrBackground，hlog 删本地副本（#168）；WithFilter printf 路径 FilterFunc 未配置时不再双重格式化（#169）；内置 JSON 路径改 append 式编码进 sync.Pool，去 map+反射 Marshal 热路径分配（#170）；NewAuditLogger 拷贝后追加哨兵选项，不再写穿调用方切片（#172）。Go 地板 1.24 → 1.26。
+
+关联问题单：logx#161、logx#162、logx#164、logx#165、logx#166、logx#167、logx#168、logx#169、logx#170、logx#171、logx#172。
+
+## [hertzlog/v0.1.2] — 2026-11-12
+
+- **BREAKING**：BaseLogger.Level 字段改 AtomicLevel 原子存储，ShouldLog/Enabled 热路径免锁——直接读写 .Level 的代码需改 Level.Load()/SetLevel()（#171）。重构清零（2026-11-11 审查批次）：hlog 8 个 Ctx* 方法收敛 emitf + toHlogLevel 单源（#161）；级别闸门抽 levelGate、auditLogger 改接口嵌入（#162）；BaseLogger.Derive 上提派生重建（#164）；std buildPrefix 合并 log/logf 前缀构造（#165）；slog.go 拆 json/caller/audit（#166）；std/hlog 补函数选项构造器 NewStdLoggerWith/NewHlogLoggerWith（#167）；导出 CtxOrBackground，hlog 删本地副本（#168）；WithFilter printf 路径 FilterFunc 未配置时不再双重格式化（#169）；内置 JSON 路径改 append 式编码进 sync.Pool，去 map+反射 Marshal 热路径分配（#170）；NewAuditLogger 拷贝后追加哨兵选项，不再写穿调用方切片（#172）。Go 地板 1.24 → 1.26。
+
+关联问题单：logx#161、logx#162、logx#164、logx#165、logx#166、logx#167、logx#168、logx#169、logx#170、logx#171、logx#172。
+
+## [hlog/v0.1.12] — 2026-11-12
+
+- **BREAKING**：BaseLogger.Level 字段改 AtomicLevel 原子存储，ShouldLog/Enabled 热路径免锁——直接读写 .Level 的代码需改 Level.Load()/SetLevel()（#171）。重构清零（2026-11-11 审查批次）：hlog 8 个 Ctx* 方法收敛 emitf + toHlogLevel 单源（#161）；级别闸门抽 levelGate、auditLogger 改接口嵌入（#162）；BaseLogger.Derive 上提派生重建（#164）；std buildPrefix 合并 log/logf 前缀构造（#165）；slog.go 拆 json/caller/audit（#166）；std/hlog 补函数选项构造器 NewStdLoggerWith/NewHlogLoggerWith（#167）；导出 CtxOrBackground，hlog 删本地副本（#168）；WithFilter printf 路径 FilterFunc 未配置时不再双重格式化（#169）；内置 JSON 路径改 append 式编码进 sync.Pool，去 map+反射 Marshal 热路径分配（#170）；NewAuditLogger 拷贝后追加哨兵选项，不再写穿调用方切片（#172）。Go 地板 1.24 → 1.26。
+
+关联问题单：logx#161、logx#162、logx#164、logx#165、logx#166、logx#167、logx#168、logx#169、logx#170、logx#171、logx#172。
+
+## [sink/v0.1.2] — 2026-11-12
+
+- **BREAKING**：BaseLogger.Level 字段改 AtomicLevel 原子存储，ShouldLog/Enabled 热路径免锁——直接读写 .Level 的代码需改 Level.Load()/SetLevel()（#171）。重构清零（2026-11-11 审查批次）：hlog 8 个 Ctx* 方法收敛 emitf + toHlogLevel 单源（#161）；级别闸门抽 levelGate、auditLogger 改接口嵌入（#162）；BaseLogger.Derive 上提派生重建（#164）；std buildPrefix 合并 log/logf 前缀构造（#165）；slog.go 拆 json/caller/audit（#166）；std/hlog 补函数选项构造器 NewStdLoggerWith/NewHlogLoggerWith（#167）；导出 CtxOrBackground，hlog 删本地副本（#168）；WithFilter printf 路径 FilterFunc 未配置时不再双重格式化（#169）；内置 JSON 路径改 append 式编码进 sync.Pool，去 map+反射 Marshal 热路径分配（#170）；NewAuditLogger 拷贝后追加哨兵选项，不再写穿调用方切片（#172）。Go 地板 1.24 → 1.26。
+
+关联问题单：logx#161、logx#162、logx#164、logx#165、logx#166、logx#167、logx#168、logx#169、logx#170、logx#171、logx#172。
+
+## [v0.10.0] — 2026-11-12
+
+- **BREAKING**：BaseLogger.Level 字段改 AtomicLevel 原子存储，ShouldLog/Enabled 热路径免锁——直接读写 .Level 的代码需改 Level.Load()/SetLevel()（#171）。重构清零（2026-11-11 审查批次）：hlog 8 个 Ctx* 方法收敛 emitf + toHlogLevel 单源（#161）；级别闸门抽 levelGate、auditLogger 改接口嵌入（#162）；BaseLogger.Derive 上提派生重建（#164）；std buildPrefix 合并 log/logf 前缀构造（#165）；slog.go 拆 json/caller/audit（#166）；std/hlog 补函数选项构造器 NewStdLoggerWith/NewHlogLoggerWith（#167）；导出 CtxOrBackground，hlog 删本地副本（#168）；WithFilter printf 路径 FilterFunc 未配置时不再双重格式化（#169）；内置 JSON 路径改 append 式编码进 sync.Pool，去 map+反射 Marshal 热路径分配（#170）；NewAuditLogger 拷贝后追加哨兵选项，不再写穿调用方切片（#172）。Go 地板 1.24 → 1.26。
+
+关联问题单：logx#161、logx#162、logx#164、logx#165、logx#166、logx#167、logx#168、logx#169、logx#170、logx#171、logx#172。
+
 ## [v0.9.2] — 2026-11-10
 
 - - build: 依赖地板对齐（第二轮发版后 floor sync，无代码变更）
