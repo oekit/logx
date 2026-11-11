@@ -2,7 +2,6 @@ package logx
 
 import (
 	"context"
-	"sync/atomic"
 )
 
 // Delegating 返回一个懒解析的 Logger：每次调用时才解析当前 Default()，
@@ -28,7 +27,7 @@ import (
 // SetLevel(LevelDebug) 会打开全进程日志，多组件各自调级互相覆盖。
 // 详见 SetLevel 的说明。
 func Delegating(component string) Logger {
-	d := delegatingLogger{resolve: Default, override: new(atomic.Int32)}
+	d := delegatingLogger{resolve: Default, gate: &levelGate{}}
 	if component != "" {
 		name := component
 		d.resolve = func() Logger {
@@ -42,30 +41,26 @@ func Delegating(component string) Logger {
 // 自身不持有任何后端状态；唯一的本地状态是实例级级别下限（#81）。
 type delegatingLogger struct {
 	resolve func() Logger
-	// override 是实例级级别下限（#81）：SetLevel 写入这里。delegating 是
+	// gate 是实例级级别下限（#81）：SetLevel 写入这里。delegating 是
 	// 值语义（接口持有值拷贝），覆盖状态经共享单元对同一实例的所有拷贝
 	// 可见；With* 派生时把当前下限值拷贝给子实例（#101：继承派生时刻的
 	// 下限、派生后各自独立调级——与 std/slog/hlog 后端 clone/Snapshot 拷
 	// Level 的继承语义对齐；此前换新空单元，父实例收紧后子 logger 静默
 	// 回默认档，「与后端行为一致」的旧注释与三个后端的实际行为相反）。
-	// 存 Level+1（0 表示未设置，区分未设置与 LevelDebug 零值）。
-	override *atomic.Int32
+	// 编码约定（存 Level+1、0=未设置）与 pass/set/derive 实现收敛在
+	// wrapper.go 的 levelGate（#162），与 filterLogger 共用。
+	gate *levelGate
 }
 
 // deriveOverride 派生时继承父实例的级别下限（#101）：拷贝当前值到新单元，
 // 派生后父子各自独立（后端 clone 拷 Level 同语义）。
-func (d delegatingLogger) deriveOverride() *atomic.Int32 {
-	child := new(atomic.Int32)
-	child.Store(d.override.Load())
-	return child
+func (d delegatingLogger) deriveOverride() *levelGate {
+	return d.gate.deriveChild()
 }
 
 // pass 实例级下限预检：已设置下限且事件级别低于下限时提前丢弃。
 func (d delegatingLogger) pass(level Level) bool {
-	if v := d.override.Load(); v != 0 && Level(v-1) > level {
-		return false
-	}
-	return true
+	return d.gate.pass(level)
 }
 
 // Enabled 判定当前解析目标是否输出该级别——LevelEnabler 透传，并叠加
@@ -204,19 +199,19 @@ func (d delegatingLogger) CtxErrorf(ctx context.Context, format string, args ...
 // 派生后独立调级——#101）
 
 func (d delegatingLogger) WithCtx(ctx context.Context) Logger {
-	return delegatingLogger{resolve: func() Logger { return d.resolve().WithCtx(ctx) }, override: d.deriveOverride()}
+	return delegatingLogger{resolve: func() Logger { return d.resolve().WithCtx(ctx) }, gate: d.deriveOverride()}
 }
 
 func (d delegatingLogger) WithService(name string) Logger {
-	return delegatingLogger{resolve: func() Logger { return d.resolve().WithService(name) }, override: d.deriveOverride()}
+	return delegatingLogger{resolve: func() Logger { return d.resolve().WithService(name) }, gate: d.deriveOverride()}
 }
 
 func (d delegatingLogger) WithAttrs(attrs ...Attr) Logger {
-	return delegatingLogger{resolve: func() Logger { return d.resolve().WithAttrs(attrs...) }, override: d.deriveOverride()}
+	return delegatingLogger{resolve: func() Logger { return d.resolve().WithAttrs(attrs...) }, gate: d.deriveOverride()}
 }
 
 func (d delegatingLogger) WithGroup(name string) Logger {
-	return delegatingLogger{resolve: func() Logger { return d.resolve().WithGroup(name) }, override: d.deriveOverride()}
+	return delegatingLogger{resolve: func() Logger { return d.resolve().WithGroup(name) }, gate: d.deriveOverride()}
 }
 
 // Unwrap 暴露当前解析目标（#106）：IsHlogBacked 沿 Unwrap 链向下钻取，
@@ -234,5 +229,5 @@ func (d delegatingLogger) Unwrap() Logger { return d.resolve() }
 // 不能放宽（目标自己的 ShouldLog 仍拦截）。要放宽某条链路的输出，需对
 // Default()（或对应后端实例）本身调级，那是全局/实例操作，delegating 不代劳。
 func (d delegatingLogger) SetLevel(level Level) {
-	d.override.Store(int32(level) + 1)
+	d.gate.set(level)
 }

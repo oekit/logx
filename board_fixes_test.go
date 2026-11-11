@@ -124,20 +124,20 @@ func TestStdLogger_ReadsLogLevelEnv(t *testing.T) {
 	defer os.Setenv("LOG_LEVEL", old)
 
 	os.Setenv("LOG_LEVEL", "DEBUG")
-	if got := NewStdLogger("s").(*stdLogger).Level; got != LevelDebug {
+	if got := NewStdLogger("s").(*stdLogger).Level.Load(); got != LevelDebug {
 		t.Fatalf("LOG_LEVEL=DEBUG ⇒ LevelDebug, got %v", got)
 	}
 	os.Setenv("LOG_LEVEL", "OFF")
-	if got := NewStdLogger("s").(*stdLogger).Level; got != LevelOff {
+	if got := NewStdLogger("s").(*stdLogger).Level.Load(); got != LevelOff {
 		t.Fatalf("LOG_LEVEL=OFF ⇒ LevelOff, got %v", got)
 	}
 	os.Setenv("LOG_LEVEL", "WARN")
-	if got := NewStdLogger("s").(*stdLogger).Level; got != LevelWarn {
+	if got := NewStdLogger("s").(*stdLogger).Level.Load(); got != LevelWarn {
 		t.Fatalf("LOG_LEVEL=WARN ⇒ LevelWarn, got %v", got)
 	}
 	// 显式参数仍最高优先
 	os.Setenv("LOG_LEVEL", "DEBUG")
-	if got := NewStdLogger("s", LevelError).(*stdLogger).Level; got != LevelError {
+	if got := NewStdLogger("s", LevelError).(*stdLogger).Level.Load(); got != LevelError {
 		t.Fatalf("显式 level 应覆盖环境, got %v", got)
 	}
 }
