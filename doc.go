@@ -33,7 +33,10 @@
 //
 // 通过 LOG_LEVEL 环境变量控制（影响所有后端），默认 INFO：
 //
-//	export LOG_LEVEL=DEBUG  # DEBUG | INFO | WARN | ERROR
+//	export LOG_LEVEL=DEBUG  # DEBUG | INFO | WARN | ERROR | OFF
+//
+// OFF 是彻底静默档（#41/#181）：所有级别（含 ERROR）一律不输出，用于
+// 压测对照 / 「想彻底关掉日志」的场景——ERROR 不是最严档，别拿它当静默用。
 //
 // # Trace ID 自动注入
 //
