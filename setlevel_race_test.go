@@ -12,12 +12,12 @@ import (
 func TestSetLevel_ConcurrentClone(t *testing.T) {
 	l := NewSlogLogger("race-test")
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
 			lvl := Level(n % 4)
-			for j := 0; j < 200; j++ {
+			for j := range 200 {
 				l.SetLevel(lvl)
 				_ = l.WithAttrs(Attr{Key: "k", Value: j})
 				_ = l.WithCtx(context.Background())

@@ -55,40 +55,40 @@ func NewLogger(logger logx.Logger) klog.FullLogger {
 	return &kclogAdapter{logger: logger}
 }
 
-func (a *kclogAdapter) Trace(v ...interface{})                  { a.logger.Debug(fmt.Sprint(v...)) }
-func (a *kclogAdapter) Debug(v ...interface{})                  { a.logger.Debug(fmt.Sprint(v...)) }
-func (a *kclogAdapter) Info(v ...interface{})                   { a.logger.Info(fmt.Sprint(v...)) }
-func (a *kclogAdapter) Notice(v ...interface{})                 { a.logger.Info(fmt.Sprint(v...)) }
-func (a *kclogAdapter) Warn(v ...interface{})                   { a.logger.Warn(fmt.Sprint(v...)) }
-func (a *kclogAdapter) Error(v ...interface{})                  { a.logger.Error(fmt.Sprint(v...)) }
-func (a *kclogAdapter) Fatal(v ...interface{})                  { a.logger.Error(fmt.Sprint(v...)) }
-func (a *kclogAdapter) Tracef(format string, v ...interface{})  { a.logger.Debugf(format, v...) }
-func (a *kclogAdapter) Debugf(format string, v ...interface{})  { a.logger.Debugf(format, v...) }
-func (a *kclogAdapter) Infof(format string, v ...interface{})   { a.logger.Infof(format, v...) }
-func (a *kclogAdapter) Noticef(format string, v ...interface{}) { a.logger.Infof(format, v...) }
-func (a *kclogAdapter) Warnf(format string, v ...interface{})   { a.logger.Warnf(format, v...) }
-func (a *kclogAdapter) Errorf(format string, v ...interface{})  { a.logger.Errorf(format, v...) }
-func (a *kclogAdapter) Fatalf(format string, v ...interface{})  { a.logger.Errorf(format, v...) }
+func (a *kclogAdapter) Trace(v ...any)                  { a.logger.Debug(fmt.Sprint(v...)) }
+func (a *kclogAdapter) Debug(v ...any)                  { a.logger.Debug(fmt.Sprint(v...)) }
+func (a *kclogAdapter) Info(v ...any)                   { a.logger.Info(fmt.Sprint(v...)) }
+func (a *kclogAdapter) Notice(v ...any)                 { a.logger.Info(fmt.Sprint(v...)) }
+func (a *kclogAdapter) Warn(v ...any)                   { a.logger.Warn(fmt.Sprint(v...)) }
+func (a *kclogAdapter) Error(v ...any)                  { a.logger.Error(fmt.Sprint(v...)) }
+func (a *kclogAdapter) Fatal(v ...any)                  { a.logger.Error(fmt.Sprint(v...)) }
+func (a *kclogAdapter) Tracef(format string, v ...any)  { a.logger.Debugf(format, v...) }
+func (a *kclogAdapter) Debugf(format string, v ...any)  { a.logger.Debugf(format, v...) }
+func (a *kclogAdapter) Infof(format string, v ...any)   { a.logger.Infof(format, v...) }
+func (a *kclogAdapter) Noticef(format string, v ...any) { a.logger.Infof(format, v...) }
+func (a *kclogAdapter) Warnf(format string, v ...any)   { a.logger.Warnf(format, v...) }
+func (a *kclogAdapter) Errorf(format string, v ...any)  { a.logger.Errorf(format, v...) }
+func (a *kclogAdapter) Fatalf(format string, v ...any)  { a.logger.Errorf(format, v...) }
 
-func (a *kclogAdapter) CtxTracef(ctx context.Context, format string, v ...interface{}) {
+func (a *kclogAdapter) CtxTracef(ctx context.Context, format string, v ...any) {
 	a.logger.CtxDebugf(ctx, format, v...)
 }
-func (a *kclogAdapter) CtxDebugf(ctx context.Context, format string, v ...interface{}) {
+func (a *kclogAdapter) CtxDebugf(ctx context.Context, format string, v ...any) {
 	a.logger.CtxDebugf(ctx, format, v...)
 }
-func (a *kclogAdapter) CtxInfof(ctx context.Context, format string, v ...interface{}) {
+func (a *kclogAdapter) CtxInfof(ctx context.Context, format string, v ...any) {
 	a.logger.CtxInfof(ctx, format, v...)
 }
-func (a *kclogAdapter) CtxNoticef(ctx context.Context, format string, v ...interface{}) {
+func (a *kclogAdapter) CtxNoticef(ctx context.Context, format string, v ...any) {
 	a.logger.CtxInfof(ctx, format, v...)
 }
-func (a *kclogAdapter) CtxWarnf(ctx context.Context, format string, v ...interface{}) {
+func (a *kclogAdapter) CtxWarnf(ctx context.Context, format string, v ...any) {
 	a.logger.CtxWarnf(ctx, format, v...)
 }
-func (a *kclogAdapter) CtxErrorf(ctx context.Context, format string, v ...interface{}) {
+func (a *kclogAdapter) CtxErrorf(ctx context.Context, format string, v ...any) {
 	a.logger.CtxErrorf(ctx, format, v...)
 }
-func (a *kclogAdapter) CtxFatalf(ctx context.Context, format string, v ...interface{}) {
+func (a *kclogAdapter) CtxFatalf(ctx context.Context, format string, v ...any) {
 	a.logger.CtxErrorf(ctx, format, v...)
 }
 

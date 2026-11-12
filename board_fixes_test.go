@@ -46,12 +46,12 @@ func TestSlogLogger_SingleWriteJSONL(t *testing.T) {
 	}()
 
 	var wg sync.WaitGroup
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
 			l := NewSlogLogger("svc")
-			for i := 0; i < perG; i++ {
+			for i := range perG {
 				l.Info("msg", "g", id, "i", i)
 			}
 		}(g)

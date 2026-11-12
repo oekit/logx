@@ -28,7 +28,7 @@ func TestHlogLogger_SetLevelConcurrentLogging(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 500; i++ {
+		for i := range 500 {
 			lvl := logx.LevelDebug
 			if i%2 == 0 {
 				lvl = logx.LevelError
@@ -37,10 +37,8 @@ func TestHlogLogger_SetLevelConcurrentLogging(t *testing.T) {
 		}
 		close(stop)
 	}()
-	for g := 0; g < 4; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 4 {
+		wg.Go(func() {
 			ctx := context.Background()
 			for {
 				select {
@@ -51,7 +49,7 @@ func TestHlogLogger_SetLevelConcurrentLogging(t *testing.T) {
 				l.CtxInfo(ctx, "concurrent info")
 				child.CtxErrorf(ctx, "concurrent error %s", "fmt")
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
