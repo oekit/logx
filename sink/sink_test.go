@@ -249,7 +249,7 @@ func TestFileSink_ConcurrentWriteClose(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
-			for j := range 100 {
+			for range 100 {
 				_, _ = s.Write([]byte("x"))
 			}
 		})
@@ -317,7 +317,7 @@ func TestMultiSink_ConcurrentAddCloseWrite(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
-			for j := range 100 {
+			for range 100 {
 				_, _ = m.Write([]byte("x"))
 			}
 		})
@@ -346,7 +346,7 @@ func TestRotatingSink_ConcurrentWriteClose(t *testing.T) {
 		var wg sync.WaitGroup
 		for range 4 {
 			wg.Go(func() {
-				for j := range 50 {
+				for range 50 {
 					_, _ = s.Write([]byte("x"))
 				}
 			})
