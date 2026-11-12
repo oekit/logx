@@ -21,6 +21,16 @@ import (
 //     其余值（浮点/复合类型/自定义 Marshaler 等）仍走 json.Marshal 单值
 //     编码——快路径覆盖日志 kv 的绝大多数形态，复杂值不构成行为差异；
 //   - 时间戳经 AppendFormat 直写，不再产生中间串。
+//
+// #191 键序契约（有意选择，整记录钉扎）：记录键序 = **插入序**——框架字段
+// 按固定顺序发布（time/level/message/service/trace_id/caller，见
+// emitBuiltinJSON），用户字段按 WithAttrs/本次调用 kv 的到达序追加，重键
+// 覆盖保持首现位置。#170 前 map 编码的字典序是实现产物而非文档化契约；
+// #170 后按字典序假设消费本仓日志的管道（字节比对 golden、字段顺序敏感
+// 的提取写法）需按插入序调整。不回退排序输出（热路径白付 sort 成本），
+// 也不加 SortedKeys 选项——键序由 TestBuiltinJSONRecordKeyOrder /
+// TestAppendRecordJSON_PreservesInsertionOrder 钉扎，调整 emit 顺序必须
+// 有意并披露。
 
 // jsonBufPool 复用编码缓冲；512B 起步覆盖典型一行记录，增长后随 Put 保留。
 var jsonBufPool = sync.Pool{
