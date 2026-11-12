@@ -2,7 +2,6 @@ package logx
 
 import (
 	stderrors "errors"
-	"fmt"
 	"log/slog"
 )
 
@@ -112,7 +111,7 @@ func appendKvAttrs(attrs []slog.Attr, kv []any) []slog.Attr {
 		if i+1 >= len(kv) {
 			return append(attrs, slog.Attr{Key: "!BADKEY", Value: slog.AnyValue(kv[i])})
 		}
-		attrs = append(attrs, slog.Any(fmt.Sprintf("%v", kv[i]), kv[i+1]))
+		attrs = append(attrs, slog.Any(keyString(kv[i]), kv[i+1])) // #174 string 键直取
 	}
 	return attrs
 }

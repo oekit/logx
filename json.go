@@ -118,10 +118,10 @@ func (l *slogLogger) emitBuiltinJSON(ctx context.Context, level Level, msg strin
 		put(a.Key, logValue(a.Value))
 	}
 	for i := 0; i+1 < len(keysAndValues); i += 2 {
-		put(fmt.Sprintf("%v", keysAndValues[i]), logValue(keysAndValues[i+1]))
+		put(keyString(keysAndValues[i]), logValue(keysAndValues[i+1])) // #174 string 键直取
 	}
 	if len(keysAndValues)%2 == 1 {
-		put(fmt.Sprintf("%v", keysAndValues[len(keysAndValues)-1]), "(MISSING)")
+		put(keyString(keysAndValues[len(keysAndValues)-1]), "(MISSING)")
 	}
 	if len(renamed) > 0 {
 		fields = setField(fields, "_renamed", renamed)
