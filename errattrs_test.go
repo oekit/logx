@@ -204,7 +204,7 @@ func TestErrAttrs_BuiltinJSONPath(t *testing.T) {
 // firstJSONLine 取第一行完整 JSON（并发下 captureStdout 可能捕获多行）。
 func firstJSONLine(t *testing.T, out string) string {
 	t.Helper()
-	for i := 0; i < len(out); i++ {
+	for i := range out {
 		if out[i] == '\n' {
 			return out[:i]
 		}

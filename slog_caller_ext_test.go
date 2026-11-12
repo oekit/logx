@@ -34,7 +34,7 @@ func TestSlogHandler_WrappedChainCaller(t *testing.T) {
 // 超限静默返回 ""（caller 字段消失，消费方无从判断原因）。
 func TestCaller_DeepWrapperChain(t *testing.T) {
 	l := logx.NewSlogLogger("svc")
-	for i := 0; i < 15; i++ {
+	for range 15 {
 		l = logx.WithFilter(l)
 	}
 	caller := logxcallertest.EmitCallerWith(l)

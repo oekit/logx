@@ -340,7 +340,7 @@ var reservedFields = map[string]bool{
 var htmlSafeSet [utf8.RuneSelf]bool
 
 func init() {
-	for i := 0; i < utf8.RuneSelf; i++ {
+	for i := range utf8.RuneSelf {
 		htmlSafeSet[i] = i >= 0x20 && i != '"' && i != '\\' && i != '<' && i != '>' && i != '&'
 	}
 }

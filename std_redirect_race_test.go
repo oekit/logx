@@ -29,16 +29,14 @@ func TestStdBackend_ConcurrentWithStdlibRedirect(t *testing.T) {
 	const gN = 8
 	const perG = 50
 	var wg sync.WaitGroup
-	for i := 0; i < gN; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < perG; j++ {
+	for range gN {
+		wg.Go(func() {
+			for j := range perG {
 				lg.Info("hello", "k", j)
 			}
-		}()
+		})
 	}
-	for j := 0; j < perG; j++ {
+	for j := range perG {
 		log.Printf("stdlib line %d", j)
 	}
 	wg.Wait()

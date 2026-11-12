@@ -113,12 +113,10 @@ func TestMultiSink_ConcurrentSafe(t *testing.T) {
 	ms := NewMultiSink(&fileSinkLike{buf: &buf})
 	defer ms.Close()
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 100 {
+		wg.Go(func() {
 			ms.Write([]byte("a"))
-		}()
+		})
 	}
 	wg.Wait()
 	if buf.Len() != 100 {
@@ -249,14 +247,12 @@ func TestFileSink_ConcurrentWriteClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+	for range 8 {
+		wg.Go(func() {
+			for range 100 {
 				_, _ = s.Write([]byte("x"))
 			}
-		}()
+		})
 	}
 	wg.Add(1)
 	go func() {
@@ -319,14 +315,12 @@ func TestMultiSink_AddAfterClose(t *testing.T) {
 func TestMultiSink_ConcurrentAddCloseWrite(t *testing.T) {
 	m := NewMultiSink(&fileSinkLike{buf: &bytes.Buffer{}})
 	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
+	for range 4 {
+		wg.Go(func() {
+			for range 100 {
 				_, _ = m.Write([]byte("x"))
 			}
-		}()
+		})
 	}
 	wg.Add(2)
 	go func() {
@@ -344,20 +338,18 @@ func TestMultiSink_ConcurrentAddCloseWrite(t *testing.T) {
 // Logger 字段的访问必须串行化(v0.25.14 首版仅用 closed 标志,审查代理用
 // -race 实测复现"读到 false 后、再次读字段前 Close 置 nil"的窗口)。
 func TestRotatingSink_ConcurrentWriteClose(t *testing.T) {
-	for round := 0; round < 50; round++ {
+	for round := range 50 {
 		s, err := NewRotatingSink(filepath.Join(t.TempDir(), fmt.Sprintf("race-%d.log", round)), 1)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var wg sync.WaitGroup
-		for i := 0; i < 4; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for j := 0; j < 50; j++ {
+		for range 4 {
+			wg.Go(func() {
+				for range 50 {
 					_, _ = s.Write([]byte("x"))
 				}
-			}()
+			})
 		}
 		wg.Add(1)
 		go func() {
