@@ -132,6 +132,17 @@ func CtxOrBackground(ctx context.Context) context.Context {
 	return context.Background()
 }
 
+// keyString 将 kv 键归一为 string（#174）。绝大多数 kv 键就是 string，
+// 直取零分配；非 string 键才回退 %v 反射格式化，与既有键口径逐字节一致
+// （内置 JSON 路径 / 注入 Handler 路径 / hlog FormatKeysAndValues /
+// filterKvs / errattrs 五处同型热路径统一走此处）。
+func keyString(v any) string {
+	if k, ok := v.(string); ok {
+		return k
+	}
+	return fmt.Sprintf("%v", v)
+}
+
 // ShouldLog 检查给定级别是否应被记录。
 //
 // #171：热路径免锁——Level 走原子读，不再对 Mu 取互斥锁（Default() 全进程

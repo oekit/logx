@@ -1,6 +1,8 @@
 package sink
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -37,8 +39,10 @@ type MultiSink struct {
 	closed atomic.Bool
 }
 
-// NewMultiSink 构造 multi sink,业务可传 0+ 个 sink(传 0 个返回
-// nil,所有 Write 调用会被丢弃,适合 dry-run 测试场景)。
+// NewMultiSink 构造 multi sink,业务可传 0+ 个 sink。传 0 个时返回
+// 空 fanout 实例(**非 nil**):Write 原样吞掉(返回 len(p), nil)、Close/Add
+// 照常安全调用——未配置 sink / dry-run 测试场景可直接当 NoOp 用,调用方
+// 无需判 nil(与同包 TestMultiSink_EmptyNilSafe 断言一致,#179)。
 func NewMultiSink(sinks ...Sink) *MultiSink {
 	return &MultiSink{sinks: append([]Sink{}, sinks...)}
 }
@@ -176,8 +180,11 @@ func (s *FileSink) Close() error {
 //
 // 用法:
 //
-//	rs, _ := NewRotatingSink("./logs/app.log", 100 /* MB */,
+//	rs, err := NewRotatingSink("./logs/app.log", 100 /* MB */,
 //	    WithMaxBackups(7), WithMaxAge(30), WithCompress(true))
+//	if err != nil {
+//	    return err // basePath 为空 / maxSizeMB<=0 在构造期 fail-fast(#177)
+//	}
 //	defer rs.Close()
 type RotatingSink struct {
 	*lumberjack.Logger
@@ -209,9 +216,19 @@ func WithLocalTime(b bool) RotatingOption {
 }
 
 // NewRotatingSink 构造轮转 sink,basePath 是当前文件路径,maxSizeMB 是
-// 单文件最大字节(MB 单位,lumberjack 内部用 byte 存,这里转 MB 让业务
-// 不用自己乘 1024*1024)。
+// 单文件最大体积,单位 MB(lumberjack.MaxSize 本就以 MB 计,直接透传,
+// 无换算;#177 修正此前「内部用 byte 存、要乘 1024*1024」的自相矛盾描述)。
+//
+// 构造期校验(#177):basePath 为空报错(lumberjack 会静默改写
+// os.TempDir()/lumberjack.log);maxSizeMB <= 0 报错(lumberjack 对非正
+// MaxSize 退化为每写必轮转)。
 func NewRotatingSink(basePath string, maxSizeMB int, opts ...RotatingOption) (*RotatingSink, error) {
+	if basePath == "" {
+		return nil, errors.New("logx/sink: basePath 不能为空(lumberjack 对空路径会静默写入 os.TempDir()/lumberjack.log)")
+	}
+	if maxSizeMB <= 0 {
+		return nil, fmt.Errorf("logx/sink: maxSizeMB 必须为正(单位 MB),得到 %d", maxSizeMB)
+	}
 	l := &lumberjack.Logger{
 		Filename: basePath,
 		MaxSize:  maxSizeMB, // lumberjack.MaxSize 单位是 MB

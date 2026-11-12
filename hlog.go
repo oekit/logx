@@ -50,9 +50,8 @@ func FormatKeysAndValues(keysAndValues ...any) string {
 		if i > 0 {
 			sb.WriteByte(' ')
 		}
-		// key
-		key := fmt.Sprintf("%v", keysAndValues[i])
-		sb.WriteString(key)
+		// key（#174 string 键直取，非 string 键才走 %v 归一）
+		sb.WriteString(keyString(keysAndValues[i]))
 		sb.WriteByte('=')
 		// value
 		if i+1 < len(keysAndValues) {

@@ -250,12 +250,10 @@ func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string,
 		user = append(user, slog.Any(a.Key, logValue(a.Value)))
 	}
 	for i := 0; i+1 < len(keysAndValues); i += 2 {
-		key := fmt.Sprintf("%v", keysAndValues[i])
-		user = append(user, slog.Any(key, logValue(keysAndValues[i+1])))
+		user = append(user, slog.Any(keyString(keysAndValues[i]), logValue(keysAndValues[i+1]))) // #174 string 键直取
 	}
 	if len(keysAndValues)%2 == 1 {
-		lastKey := fmt.Sprintf("%v", keysAndValues[len(keysAndValues)-1])
-		user = append(user, slog.Any(lastKey, "(MISSING)"))
+		user = append(user, slog.Any(keyString(keysAndValues[len(keysAndValues)-1]), "(MISSING)"))
 	}
 	for i := len(l.groups) - 1; i >= 0; i-- {
 		user = []slog.Attr{{Key: l.groups[i], Value: slog.GroupValue(user...)}}

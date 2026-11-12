@@ -111,8 +111,8 @@ func (f *filterLogger) filterKvs(kvs []any) []any {
 	copy(out, kvs)
 	for i := 0; i+1 < len(out); i += 2 {
 		// #85：键统一按 %v 归一（非 string 键与 emit 侧键口径一致），
-		// 命中判定大小写不敏感。
-		if f.cfg.matchKey(fmt.Sprintf("%v", out[i])) {
+		// 命中判定大小写不敏感；#174 string 键直取免反射。
+		if f.cfg.matchKey(keyString(out[i])) {
 			out[i+1] = "***"
 		}
 	}
