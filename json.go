@@ -20,7 +20,9 @@ import (
 //   - 标量快路径（string/bool/整数族）直写缓冲，与 encoding/json 字节同构；
 //     其余值（浮点/复合类型/自定义 Marshaler 等）仍走 json.Marshal 单值
 //     编码——快路径覆盖日志 kv 的绝大多数形态，复杂值不构成行为差异；
-//   - 时间戳经 AppendFormat 直写，不再产生中间串。
+//   - 时间戳经 AppendFormat 直写，不再产生中间串（#195 落实：#170 头注释
+//     即宣称此行为，但实现当时仍是 ts.Format 分配；现 time 字段以 time.Time
+//     进 appendJSONValue 直写，字节同构有语料测试钉扎）。
 //
 // #191 键序契约（有意选择，整记录钉扎）：记录键序 = **插入序**——框架字段
 // 按固定顺序发布（time/level/message/service/trace_id/caller，见
@@ -74,8 +76,10 @@ func setFieldIfAbsent(fields []jsonField, key string, v any) []jsonField {
 // 框架字段名集合（#68）：time/level/message/service/trace_id/caller 由本函数
 // 发布，用户 Attr/kv 同键冲突时**框架字段优先**、用户键加 "_" 前缀落地并打
 // "_renamed" 标记——此前 map 赋值让用户值静默覆盖框架字段（trace_id 被覆盖 =
-// 追踪链断）。用户字段命名空间前缀（#75 #83）：WithGroup 累积的组以
-// "<g1>.<g2>." 前缀施加到用户 Attr/kv 键，框架字段不进组。
+// 追踪链断）。用户字段命名空间前缀（#75 #83 #192）：组以 "<g1>.<g2>." 前缀
+// 施加，且按**挂载时刻**固化——持久属性用 attrPrefixes 里各自的快照，本次
+// 调用 kv 用当前组前缀；WithAttrs 先于 WithGroup 的属性留在组外（slog
+// 「subsequent attributes」契约），框架字段不进组。
 func (l *slogLogger) emitBuiltinJSON(ctx context.Context, level Level, msg string, pc uintptr, ts time.Time, keysAndValues ...any) {
 	if ts.IsZero() {
 		ts = time.Now()
@@ -84,14 +88,20 @@ func (l *slogLogger) emitBuiltinJSON(ctx context.Context, level Level, msg strin
 	if len(l.groups) > 0 {
 		groupPrefix = joinGroups(l.groups)
 	}
+	// #194：脱敏键集非空时先对调用 kv 脱敏（命中才拷贝）——字段渲染与降级
+	// rawKv 共用同一份已脱敏 kv，敏感值不得经 rawKv 旁路落盘。
+	if l.attrMask != nil && len(keysAndValues) > 0 {
+		keysAndValues = maskKvs(l.attrMask, keysAndValues)
+	}
 
 	bp := jsonBufPool.Get().(*[]byte)
 	buf := (*bp)[:0]
 	fields := make([]jsonField, 0, 6+len(l.Attrs)+len(keysAndValues)/2+1)
 
-	// 框架字段（固定顺序发布；reservedFields 同步维护）
+	// 框架字段（固定顺序发布；reservedFields 同步维护）。time 以 time.Time
+	// 直写缓冲（#195：AppendFormat 直写，消除 ts.Format 的中间串分配）。
 	fields = append(fields,
-		jsonField{"time", ts.Format(time.RFC3339Nano)},
+		jsonField{"time", ts},
 		jsonField{"level", LevelString(level)},
 		jsonField{"message", msg},
 	)
@@ -112,26 +122,38 @@ func (l *slogLogger) emitBuiltinJSON(ctx context.Context, level Level, msg strin
 	}
 
 	// 用户字段：WithAttrs 持久属性 + 本次调用的 kv 对；框架字段冲突改名 +
-	// "_renamed" 标记（#68），组前缀施加（#75/#83）。冲突判定按**组前缀后的
-	// 完整键**（putRecordField 历史口径）："g.time" 是组内用户键、不撞框架
-	// 字段；改名落地为 "_key"（不带组前缀，与旧实现一致）。
+	// "_renamed" 标记（#68）。冲突判定按**组前缀后的完整键**（历史口径）：
+	// "g.time" 是组内用户键、不撞框架字段；改名落地为 "_key"（不带组前缀，
+	// 与旧实现一致）。#194：持久属性值按下沉键集脱敏（raw 键匹配）。
 	var renamed []string
-	put := func(key string, v any) {
-		full := groupPrefix + key
+	put := func(full, rawKey string, v any) {
 		if reservedFields[full] {
 			renamed = append(renamed, full)
-			full = "_" + key // 改名键直接覆盖用户自造的同名 "_" 键（只损失用户数据）
+			full = "_" + rawKey // 改名键直接覆盖用户自造的同名 "_" 键（只损失用户数据）
 		}
 		fields = setField(fields, full, v)
 	}
-	for _, a := range l.Attrs {
-		put(a.Key, logValue(a.Value))
+	for i, a := range l.Attrs {
+		v := logValue(a.Value)
+		if l.attrMask != nil && matchMaskKey(l.attrMask, a.Key) {
+			v = "***"
+		}
+		// #192：前缀在挂载时刻已固化；空前缀拼接零分配（runtime 快路径）
+		prefix := ""
+		if i < len(l.attrPrefixes) {
+			prefix = l.attrPrefixes[i]
+		} else if len(l.groups) > 0 {
+			prefix = groupPrefix // 防御：快照缺失时退回旧行为
+		}
+		put(prefix+a.Key, a.Key, v)
 	}
 	for i := 0; i+1 < len(keysAndValues); i += 2 {
-		put(keyString(keysAndValues[i]), logValue(keysAndValues[i+1])) // #174 string 键直取
+		raw := keyString(keysAndValues[i])
+		put(groupPrefix+raw, raw, logValue(keysAndValues[i+1])) // #174 string 键直取
 	}
 	if len(keysAndValues)%2 == 1 {
-		put(keyString(keysAndValues[len(keysAndValues)-1]), "(MISSING)")
+		raw := keyString(keysAndValues[len(keysAndValues)-1])
+		put(groupPrefix+raw, raw, "(MISSING)")
 	}
 	if len(renamed) > 0 {
 		fields = setField(fields, "_renamed", renamed)
@@ -141,7 +163,7 @@ func (l *slogLogger) emitBuiltinJSON(ctx context.Context, level Level, msg strin
 	if err != nil {
 		// 序列化失败（NaN/channel/func/循环引用等不可序列化值）：
 		// 降级为纯字符串输出，绝不静默丢弃整条日志
-		buf = marshalFallback(fields, level, msg, err, keysAndValues, groupPrefix, l.Attrs)
+		buf = marshalFallback(fields, ts, level, msg, err, keysAndValues, groupPrefix, l.stampedAttrs())
 	}
 	buf = append(buf, '\n')
 	// 换行并入同一次 Write（#65）：两次 Write 之间无原子性保证，并发下另一
@@ -195,14 +217,22 @@ func appendRecordJSON(dst []byte, fields []jsonField) ([]byte, error) {
 // 绝不静默丢弃整条日志。降级不脱钩（#100）：service/trace_id/caller 取自
 // 已发布字段，WithAttrs 持久属性逐键平铺（值统一转字符串）——一条 NaN 不该
 // 让整条日志失去可检索性。框架降级字段优先，用户同名键让位。
+// #193：降级行补发布 time 框架字段（与正常行 schema 归一——JSONL 下游对
+// 降级行取事件时间不再退化为采集时间）；rawKv 的 kv 键施加当前组前缀
+// （与正常路径 put 同一口径，同一条带组 logger 的正常行/降级行不再同字段
+// 两种键名）；attrs 键已由调用方按挂载时刻的组前缀固化（#192，stampedAttrs）。
 // rawKv 走 FormatKeysAndValues（#136）：产出 "k1=v1 k2=v2" 且奇数长度补
 // (MISSING)，与 std/hlog 后端的 kv 渲染同一口径。
-func marshalFallback(fields []jsonField, level Level, msg string, marshalErr error, keysAndValues []any, groupPrefix string, attrs []Attr) []byte {
+func marshalFallback(fields []jsonField, ts time.Time, level Level, msg string, marshalErr error, keysAndValues []any, groupPrefix string, attrs []Attr) []byte {
+	if ts.IsZero() {
+		ts = time.Now()
+	}
 	out := []jsonField{
+		{key: "time", val: ts.Format(time.RFC3339Nano)},
 		{key: "level", val: LevelString(level)},
 		{key: "message", val: msg},
 		{key: "marshalErr", val: marshalErr.Error()},
-		{key: "rawKv", val: FormatKeysAndValues(keysAndValues...)},
+		{key: "rawKv", val: FormatKeysAndValues(prefixedKvs(groupPrefix, keysAndValues)...)},
 	}
 	for _, k := range [...]string{"service", "trace_id", "caller"} {
 		for _, f := range fields {
@@ -215,8 +245,7 @@ func marshalFallback(fields []jsonField, level Level, msg string, marshalErr err
 		}
 	}
 	for _, a := range attrs {
-		k := groupPrefix + a.Key
-		out = setFieldIfAbsent(out, k, fmt.Sprintf("%v", logValue(a.Value)))
+		out = setFieldIfAbsent(out, a.Key, fmt.Sprintf("%v", a.Value))
 	}
 
 	buf := make([]byte, 0, 256)
@@ -230,6 +259,21 @@ func marshalFallback(fields []jsonField, level Level, msg string, marshalErr err
 		buf = appendJSONString(buf, f.val.(string))
 	}
 	return append(buf, '}')
+}
+
+// prefixedKvs 给 kv 键施加组前缀（#193：降级行 rawKv 与正常路径 put 同一
+// 口径）。不改动入参切片；groupPrefix 为空时原样返回（零拷贝）。奇数长度
+// 的尾键同样施加前缀（它也是键）。
+func prefixedKvs(groupPrefix string, kvs []any) []any {
+	if groupPrefix == "" || len(kvs) == 0 {
+		return kvs
+	}
+	out := make([]any, len(kvs))
+	copy(out, kvs)
+	for i := 0; i < len(out); i += 2 {
+		out[i] = groupPrefix + keyString(out[i])
+	}
+	return out
 }
 
 // appendJSONValue 追加一个 JSON 值。标量快路径与 encoding/json 字节同构；
@@ -267,6 +311,8 @@ func appendJSONValue(dst []byte, v any) ([]byte, error) {
 		return strconv.AppendUint(dst, uint64(x), 10), nil
 	case uint64:
 		return strconv.AppendUint(dst, x, 10), nil
+	case time.Time:
+		return appendJSONTimestamp(dst, x), nil
 	default:
 		enc, err := json.Marshal(v)
 		if err != nil {
@@ -274,6 +320,17 @@ func appendJSONValue(dst []byte, v any) ([]byte, error) {
 		}
 		return append(dst, enc...), nil
 	}
+}
+
+// appendJSONTimestamp 追加带引号的 RFC3339Nano 时间戳字符串（#195）：
+// 输出字符集（0-9、T、Z、+、-、:、.）全部 JSON 安全无需转义，AppendFormat
+// 直写进调用方缓冲——消除此前 ts.Format 生成中间串再走字符串快路径的每行
+// 分配，头注释宣称的行为自此属实。与 ts.Format 的字节同构由
+// TestAppendJSONTimestamp_MatchesFormat 对语料钉住。
+func appendJSONTimestamp(dst []byte, ts time.Time) []byte {
+	dst = append(dst, '"')
+	dst = ts.AppendFormat(dst, time.RFC3339Nano)
+	return append(dst, '"')
 }
 
 // appendJSONString 追加一个 JSON 字符串字面量（含引号）。转义口径与

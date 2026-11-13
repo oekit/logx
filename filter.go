@@ -36,15 +36,71 @@ func FilterKey(keys ...string) FilterOption {
 	}
 }
 
-// matchKey 判定键名是否命中过滤键（#85）：大小写不敏感。键集通常只有
-// 个位数条目，线性 EqualFold 比下小写归一的 map 查找省一次分配。
+// matchKey 判定键名是否命中过滤键（#85）：大小写不敏感。
 func (c *filterConfig) matchKey(key string) bool {
-	for k := range c.keys {
+	return matchMaskKey(c.keys, key)
+}
+
+// matchMaskKey 判定键名是否命中脱敏键集（#85）：大小写不敏感。键集通常只有
+// 个位数条目，线性 EqualFold 比下小写归一的 map 查找省一次分配。
+// 包装层（filterKvs/maskAttrs）与后端渲染面（AttrKeyMasker 下沉，#194）共用
+// 同一口径。
+func matchMaskKey(keys map[string]struct{}, key string) bool {
+	for k := range keys {
 		if strings.EqualFold(k, key) {
 			return true
 		}
 	}
 	return false
+}
+
+// maskKvs 返回键命中脱敏键集的 kv 拷贝（值替换为 "***"）。未命中任何键时
+// 原样返回（热路径零拷贝）；不改动入参切片。键归一与键匹配口径与 filterKvs
+// 一致（#85/#174）。供后端渲染面下沉脱敏使用（#194）：字段渲染与降级
+// rawKv 必须共用同一份已脱敏 kv，否则敏感值会经 rawKv 旁路落盘。
+func maskKvs(keys map[string]struct{}, kvs []any) []any {
+	hit := false
+	for i := 0; i+1 < len(kvs); i += 2 {
+		if matchMaskKey(keys, keyString(kvs[i])) {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		return kvs
+	}
+	out := make([]any, len(kvs))
+	copy(out, kvs)
+	for i := 0; i+1 < len(out); i += 2 {
+		if matchMaskKey(keys, keyString(out[i])) {
+			out[i+1] = "***"
+		}
+	}
+	return out
+}
+
+// maskAttrs 返回键命中脱敏键集的属性拷贝（值替换为 "***"）。未命中任何键
+// 时原样返回；不改动入参切片。与 maskAttrs 方法（包装层派生面，#85）同
+// 口径的渲染面形态（#194）。
+func maskAttrsSlice(keys map[string]struct{}, attrs []Attr) []Attr {
+	hit := false
+	for _, a := range attrs {
+		if matchMaskKey(keys, a.Key) {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		return attrs
+	}
+	out := make([]Attr, len(attrs))
+	copy(out, attrs)
+	for i := range out {
+		if matchMaskKey(keys, out[i].Key) {
+			out[i].Value = "***"
+		}
+	}
+	return out
 }
 
 // FilterFunc 命中即丢弃整条记录（在脱敏之后评估）。
@@ -60,6 +116,12 @@ func FilterFunc(fn func(msg string, kvs []any) bool) FilterOption {
 //
 //	l := logx.WithFilter(logx.Default(), logx.FilterKey("password", "token"))
 //
+// base 已挂属性（#194）：WithFilter **之前** base 已挂的持久属性由后端直渲、
+// 结构上绕过包装层——base 实现 AttrKeyMasker 可选接口时（内置 std/slog/hlog
+// 后端均实现），本函数把 FilterKey 键集下沉给后端，在其渲染持久 Attrs 的
+// 全部路径（结构化/printf）对命中键脱敏；第三方 Logger 实现不支持下沉时，
+// 这部分属性**不经过滤**，构造顺序应保持「先 WithFilter 再 WithAttrs」。
+//
 // ⚠️ printf 路径（Debugf/Infof/... 与 Ctx*f）**不做 FilterKey 脱敏**，只做
 // FilterFunc 丢弃评估（#80）：printf 参数只有格式化值、没有键名，脱敏无从
 // 匹配——格式化串里的 password/token 会原样落盘。敏感数据一律走 kv
@@ -72,7 +134,30 @@ func WithFilter(l Logger, opts ...FilterOption) Logger {
 	for _, opt := range opts {
 		opt(cfg)
 	}
-	return &filterLogger{base: l, cfg: cfg, gate: &levelGate{}}
+	base := l
+	// #194：base 已挂属性由后端直渲、包装层看不见——键集下沉给后端，在
+	// 其渲染持久 Attrs 的全部路径生效。cfg.keys 构造后只读，与后端共享。
+	if len(cfg.keys) > 0 {
+		if m, ok := l.(AttrKeyMasker); ok {
+			base = m.WithAttrKeyMask(cfg.keys)
+		}
+	}
+	return &filterLogger{base: base, cfg: cfg, gate: &levelGate{}}
+}
+
+// AttrKeyMasker 是后端可选实现的持久属性键脱敏接口（#194）：WithFilter
+// 检测 base 实现本接口时把 FilterKey 键集下沉给后端，后端在其**渲染持久
+// Attrs 的全部路径**上对命中键脱敏。
+//
+// 为什么需要：filterLogger 只能遮蔽「包装之后经本 logger 传入」的 kv/Attr；
+// base 在 WithFilter 之前已挂的属性由后端直渲，结构上绕过包装层——此前
+// FilterKey("db_dsn") 对这类属性零生效，明文敏感值原样落盘（#194 探针）。
+// 键下沉后，后端渲染面（内置 JSON / 注入 Handler / std / hlog）的持久属性
+// 一律过键脱敏；包装层对调用入参的脱敏与后端面叠加幂等（"***" 不再产生
+// 新泄漏）。键匹配口径与 FilterKey/maskAttrs 一致：大小写不敏感（#85）。
+// keys 映射由 WithFilter 构造后只读共享，实现方不得修改。
+type AttrKeyMasker interface {
+	WithAttrKeyMask(keys map[string]struct{}) Logger
 }
 
 type filterLogger struct {
@@ -345,6 +430,17 @@ func (f *filterLogger) maskAttrs(attrs []Attr) []Attr {
 
 func (f *filterLogger) WithGroup(name string) Logger {
 	return f.derive(&filterLogger{base: f.base.WithGroup(name), cfg: f.cfg})
+}
+
+// WithAttrKeyMask 实现 AttrKeyMasker（#194）：把下沉键集继续传给底座，
+// 叠加在包装层过滤之上——WithFilter(WithFilter(base, k1), k2) 两个键集都
+// 生效。底座不支持下沉时静默降级（边界见 WithFilter godoc）。
+func (f *filterLogger) WithAttrKeyMask(keys map[string]struct{}) Logger {
+	next := &filterLogger{base: f.base, cfg: f.cfg}
+	if m, ok := f.base.(AttrKeyMasker); ok {
+		next.base = m.WithAttrKeyMask(keys)
+	}
+	return f.derive(next)
 }
 
 // Enabled 判定脱敏后端是否输出该级别——LevelEnabler 实现（#76）。

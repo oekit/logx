@@ -122,7 +122,8 @@ func TestNewSlogLogger_WithHandler_CloneKeepsHandler(t *testing.T) {
 	l := NewSlogLogger("svc", WithHandler(h)).
 		WithAttrs(Attr{Key: "rid", Value: "r-1"}).
 		WithService("child").
-		WithGroup("g")
+		WithGroup("g").
+		WithAttrs(Attr{Key: "inside", Value: true})
 
 	l.Info("msg")
 
@@ -134,19 +135,24 @@ func TestNewSlogLogger_WithHandler_CloneKeepsHandler(t *testing.T) {
 	if got["service"] != "child" {
 		t.Errorf("service = %v", got["service"])
 	}
-	// #99：用户字段（含派生前挂的 Attr）进组、框架字段留顶层
+	// #192：WithGroup **之前**挂的 Attr 留在组外（slog「subsequent
+	// attributes」契约——此前该属性被错误卷进组）；框架字段留顶层（#99）。
+	if got["rid"] != "r-1" {
+		t.Errorf("rid = %v, want 顶层 r-1", got["rid"])
+	}
+	// WithGroup 之后挂的 Attr 进组（#99 语义不变）
 	grp, ok := got["g"].([]slog.Attr)
 	if !ok {
 		t.Fatalf("g 组属性缺失: %#v", got["g"])
 	}
 	found := false
 	for _, a := range grp {
-		if a.Key == "rid" && a.Value.Any() == "r-1" {
+		if a.Key == "inside" && a.Value.Any() == true {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("rid 未落进 g 组: %#v", grp)
+		t.Errorf("inside 未落进 g 组: %#v", grp)
 	}
 }
 

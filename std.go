@@ -11,6 +11,10 @@ import (
 // stdLogger 是基于标准库 log 的 Logger 实现。
 type stdLogger struct {
 	BaseLogger
+	// attrMask 是过滤层下沉的持久属性脱敏键集（#194，AttrKeyMasker）；
+	// nil 表示无脱敏。map 由 WithFilter 构造后只读共享，withBase 派生
+	// 原样携带（不拷贝）。
+	attrMask map[string]struct{}
 }
 
 // stdLogDynamicWriter 在**每次写入时**解析当前标准库 log 的输出目标
@@ -96,7 +100,18 @@ func NewStdLogger(service string, level ...Level) Logger {
 
 func (l *stdLogger) withBase(apply func(cp *BaseLogger)) Logger {
 	// #164：Snapshot + apply + 逐字段重建上提到 BaseLogger.Derive
-	return &stdLogger{BaseLogger: l.Derive(apply)}
+	// #194：attrMask 只读共享（构造后不可变），派生原样携带
+	return &stdLogger{BaseLogger: l.Derive(apply), attrMask: l.attrMask}
+}
+
+// WithAttrKeyMask 实现 AttrKeyMasker（#194）：把过滤层下沉的键集带进自身
+// 与后续派生，在渲染持久 Attrs 的全部路径（结构化 log 与 printf logf）对
+// 命中键脱敏——FilterKey 对 WithFilter 之前 base 已挂的属性自此生效。
+// 键集并入已有键集（嵌套包裹叠加，与 slog 后端同口径）；keys 只读共享。
+func (l *stdLogger) WithAttrKeyMask(keys map[string]struct{}) Logger {
+	c := l.withBase(func(cp *BaseLogger) {}).(*stdLogger)
+	c.attrMask = mergeMaskKeys(l.attrMask, keys)
+	return c
 }
 
 func (l *stdLogger) WithCtx(ctx context.Context) Logger {
@@ -136,7 +151,17 @@ func (l *stdLogger) log(level Level, ctx context.Context, msg string, keysAndVal
 	}
 	prefix := l.buildPrefix(ctx, level)
 
-	kvStr := formatAttrsAndKV(l.Attrs, keysAndValues...)
+	// #194：下沉键集非空时持久属性与调用 kv 一并脱敏——敏感值不得绕过
+	// 过滤直渲（未命中零拷贝）。
+	attrs := l.Attrs
+	if l.attrMask != nil && len(attrs) > 0 {
+		attrs = maskAttrsSlice(l.attrMask, attrs)
+	}
+	if l.attrMask != nil && len(keysAndValues) > 0 {
+		keysAndValues = maskKvs(l.attrMask, keysAndValues)
+	}
+
+	kvStr := formatAttrsAndKV(attrs, keysAndValues...)
 	if kvStr != "" {
 		stdWriter.Printf("%s %s %s", prefix, msg, kvStr)
 	} else {
@@ -170,7 +195,13 @@ func (l *stdLogger) logf(level Level, ctx context.Context, format string, args .
 	// 持久属性做审计/追踪的调用方在 printf 路径静默丢字段。
 	// #165：属性拼装与结构化路径（log）统一走 formatAttrsAndKV，消除
 	// printf/结构化两条路径的残留分叉（无 kv 参数时即纯属性串，输出不变）。
-	if kvStr := formatAttrsAndKV(l.Attrs); kvStr != "" {
+	// #194：下沉键集非空时持久属性同样脱敏（printf 无调用 kv 可脱敏，
+	// #80 口径）。
+	attrs := l.Attrs
+	if l.attrMask != nil && len(attrs) > 0 {
+		attrs = maskAttrsSlice(l.attrMask, attrs)
+	}
+	if kvStr := formatAttrsAndKV(attrs); kvStr != "" {
 		stdWriter.Printf("%s %s %s", prefix, msg, kvStr)
 		return
 	}
