@@ -65,6 +65,10 @@ func (nopLogger) WithAttrs(attrs ...Attr) Logger     { return nopLogger{} }
 func (nopLogger) WithGroup(name string) Logger       { return nopLogger{} }
 func (nopLogger) SetLevel(level Level)               {}
 
+// WithAttrKeyMask 实现 AttrKeyMasker（#194）：零输出 logger 无渲染面，
+// 键集无处生效，原样返回自身保持链式形态。
+func (nopLogger) WithAttrKeyMask(keys map[string]struct{}) Logger { return nopLogger{} }
+
 // Enabled 恒 false——实现 LevelEnabler，让 logx.Enabled 的热路径守卫
 // 跳过昂贵参数求值（不打印 ≠ 不算：参数已经求值完了）。
 func (nopLogger) Enabled(level Level) bool { return false }
