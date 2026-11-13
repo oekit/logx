@@ -2,6 +2,12 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.11.0] — 2026-11-13
+
+- 日志门面契约批：组挂载序契约（WithAttrs 先于 WithGroup 属性归位 #192）、序列化降级补 time 字段与组前缀（#193）、FilterKey 对 WithFilter 前 base 属性生效 + AttrKeyMasker 键集下沉三后端（#194）、JSON 时间戳 AppendFormat 直写移除中间串分配（#195）；kv 热路径 string 直取零分配（#174）、FormatWithTraceID/FormatAttrs 补测（#175）、kitexlog interface{}→any 清扫（#176）、NewRotatingSink 构造期校验（#177）、NewMultiSink godoc 与实现对齐（#179）、shutdown 兼容层删除（#180，**BREAKING** 迁移路径 lifecycle.Manager）、LOG_LEVEL 补 OFF 档（#181）
+
+关联问题单：logx#174、logx#175、logx#176、logx#177、logx#179、logx#180、logx#181、logx#192、logx#193、logx#194、logx#195。
+
 ## [kitexlog/v0.1.12] — 2026-11-12
 
 - **BREAKING**：BaseLogger.Level 字段改 AtomicLevel 原子存储，ShouldLog/Enabled 热路径免锁——直接读写 .Level 的代码需改 Level.Load()/SetLevel()（#171）。重构清零（2026-11-11 审查批次）：hlog 8 个 Ctx* 方法收敛 emitf + toHlogLevel 单源（#161）；级别闸门抽 levelGate、auditLogger 改接口嵌入（#162）；BaseLogger.Derive 上提派生重建（#164）；std buildPrefix 合并 log/logf 前缀构造（#165）；slog.go 拆 json/caller/audit（#166）；std/hlog 补函数选项构造器 NewStdLoggerWith/NewHlogLoggerWith（#167）；导出 CtxOrBackground，hlog 删本地副本（#168）；WithFilter printf 路径 FilterFunc 未配置时不再双重格式化（#169）；内置 JSON 路径改 append 式编码进 sync.Pool，去 map+反射 Marshal 热路径分配（#170）；NewAuditLogger 拷贝后追加哨兵选项，不再写穿调用方切片（#172）。Go 地板 1.24 → 1.26。
