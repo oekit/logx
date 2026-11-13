@@ -143,6 +143,12 @@ func keyString(v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
+// KeyString 将 kv 键归一为 string（keyString 的导出形态，#194）：hlog 子包
+// 的下沉脱敏（AttrKeyMasker）需要与根包一致的键口径——导出理由与
+// CtxOrBackground 的 #168 导出相同（子包不可触达未导出符号，与其复制一份
+// 逐字相同的本地副本不如单源导出）。
+func KeyString(v any) string { return keyString(v) }
+
 // ShouldLog 检查给定级别是否应被记录。
 //
 // #171：热路径免锁——Level 走原子读，不再对 Mu 取互斥锁（Default() 全进程

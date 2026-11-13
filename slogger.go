@@ -12,7 +12,9 @@ import (
 //
 // 记录经 logx 的 Ctx* 方法下发（保留 ctx 以便 trace_id 注入）；后端是 slog
 // 后端时经 slogBridgeSink 直通（复用 r.PC/r.Time，不栈回溯，#84）；级别
-// 映射按阈值制（见 logxLevel）；WithGroup 实现为键前缀（"group.key"）。
+// 映射按阈值制（见 logxLevel）；WithGroup 实现为键前缀（"group.key"），且
+// 只限定其后的属性（#192：WithAttrs 在挂载时刻固化当时的组前缀，先于
+// WithGroup 的属性留在组外，与 stdlib slog.Handler 契约对拍一致）。
 func SlogHandler(l Logger) slog.Handler {
 	if l == nil {
 		panic("logx: SlogHandler called with nil logger")
@@ -31,8 +33,8 @@ type slogBridgeSink interface {
 
 type slogxHandler struct {
 	l     Logger
-	attrs []slog.Attr // WithAttrs 累积的前缀属性
-	group string      // WithGroup 累积的键前缀（不含尾部点）
+	attrs []slog.Attr // WithAttrs 累积的属性——键已按**挂载时刻**的组前缀固化（#192）
+	group string      // WithGroup 累积的键前缀（不含尾部点），只限定其后的 Record attrs
 }
 
 func (h *slogxHandler) Enabled(_ context.Context, level slog.Level) bool {
@@ -41,21 +43,22 @@ func (h *slogxHandler) Enabled(_ context.Context, level slog.Level) bool {
 
 func (h *slogxHandler) Handle(ctx context.Context, r slog.Record) error {
 	kvs := make([]any, 0, (len(h.attrs)+r.NumAttrs())*2)
+	// WithAttrs 累积属性：前缀已在挂载时刻固化（#192），不再叠加当前组——
+	// 此前输出时刻统一回填最终前缀，WithAttrs 先于 WithGroup 的属性被错误
+	// 卷进组，违反 slog「subsequent attributes」契约。
+	for _, a := range h.attrs {
+		kvs = append(kvs, a.Key, a.Value.Any())
+	}
+	// Record attrs：Handle 时刻组即当前组，按契约施加前缀。
 	prefix := ""
 	if h.group != "" {
 		prefix = h.group + "."
 	}
-	appendAttr := func(a slog.Attr) {
+	r.Attrs(func(a slog.Attr) bool {
 		if a.Equal(slog.Attr{}) {
-			return
+			return true
 		}
 		kvs = append(kvs, prefix+a.Key, a.Value.Any())
-	}
-	for _, a := range h.attrs {
-		appendAttr(a)
-	}
-	r.Attrs(func(a slog.Attr) bool {
-		appendAttr(a)
 		return true
 	})
 
@@ -82,8 +85,23 @@ func (h *slogxHandler) Handle(ctx context.Context, r slog.Record) error {
 }
 
 func (h *slogxHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	// #192：stdlib 口径——WithAttrs 落盘时即用**当时**的组前缀预格式化
+	// （对齐 GOROOT log/slog commonHandler.withAttrs 的 state.prefix 固化），
+	// 顺序信息自此保留在键里，后续 WithGroup 不再回溯改写先挂属性。
 	next := &slogxHandler{l: h.l, group: h.group}
-	next.attrs = append(append([]slog.Attr{}, h.attrs...), attrs...)
+	prefix := ""
+	if h.group != "" {
+		prefix = h.group + "."
+	}
+	next.attrs = make([]slog.Attr, 0, len(h.attrs)+len(attrs))
+	next.attrs = append(next.attrs, h.attrs...)
+	for _, a := range attrs {
+		if a.Equal(slog.Attr{}) {
+			continue // 空属性丢弃（stdlib withAttrs 同口径）
+		}
+		a.Key = prefix + a.Key
+		next.attrs = append(next.attrs, a)
+	}
 	return next
 }
 

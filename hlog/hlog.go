@@ -19,6 +19,7 @@ package hlog
 import (
 	"context"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/cloudwego/hertz/pkg/common/hlog"
@@ -39,6 +40,10 @@ var hlogMu sync.RWMutex
 // hlogLogger 是基于 Hertz hlog 的 Logger 实现。
 type hlogLogger struct {
 	logx.BaseLogger
+	// attrMask 是过滤层下沉的持久属性脱敏键集（#194，logx.AttrKeyMasker）；
+	// nil 表示无脱敏。map 由 WithFilter 构造后只读共享，withBase 派生原样
+	// 携带（不拷贝）。
+	attrMask map[string]struct{}
 }
 
 // HlogOption 是 hlog 后端的函数选项（#167，与 SlogOption/StdOption 同形）。
@@ -107,7 +112,95 @@ func (l *hlogLogger) initHlogLevel() {
 
 func (l *hlogLogger) withBase(apply func(cp *logx.BaseLogger)) logx.Logger {
 	// #164：Snapshot + apply + 逐字段重建上提到 logx.BaseLogger.Derive
-	return &hlogLogger{BaseLogger: l.Derive(apply)}
+	// #194：attrMask 只读共享（构造后不可变），派生原样携带
+	return &hlogLogger{BaseLogger: l.Derive(apply), attrMask: l.attrMask}
+}
+
+// WithAttrKeyMask 实现 logx.AttrKeyMasker（#194）：把过滤层下沉的键集带进
+// 自身与后续派生，在渲染持久 Attrs 的全部路径（结构化与 printf）对命中键
+// 脱敏——FilterKey 对 WithFilter 之前 base 已挂的属性自此生效。键匹配口径
+// 与根包 matchMaskKey 一致（大小写不敏感，#85）；键集并入已有键集（嵌套
+// 包裹叠加，与根包三后端同口径）；keys 只读共享。
+func (l *hlogLogger) WithAttrKeyMask(keys map[string]struct{}) logx.Logger {
+	c := l.withBase(func(cp *logx.BaseLogger) {}).(*hlogLogger)
+	c.attrMask = mergeMaskKeys(l.attrMask, keys)
+	return c
+}
+
+// mergeMaskKeys 并入脱敏键集（#194，与根包同源复制——hlog 是子包，根包该
+// 判定未导出；语义变更需两处同步）。
+func mergeMaskKeys(base, keys map[string]struct{}) map[string]struct{} {
+	if len(keys) == 0 {
+		return base
+	}
+	if len(base) == 0 {
+		return keys
+	}
+	merged := make(map[string]struct{}, len(base)+len(keys))
+	for k := range base {
+		merged[k] = struct{}{}
+	}
+	for k := range keys {
+		merged[k] = struct{}{}
+	}
+	return merged
+}
+
+// matchMaskKey 判定键名是否命中脱敏键集（#85 口径，与根包同源复制——
+// hlog 是子包，根包该判定未导出；语义变更需两处同步）。
+func matchMaskKey(keys map[string]struct{}, key string) bool {
+	for k := range keys {
+		if strings.EqualFold(k, key) {
+			return true
+		}
+	}
+	return false
+}
+
+// maskAttrPrefix 返回脱敏后的持久属性前缀（#194）：键命中键集的值替换为
+// "***"，未命中零拷贝。
+func maskAttrPrefix(keys map[string]struct{}, attrs []logx.Attr) string {
+	hit := false
+	for _, a := range attrs {
+		if matchMaskKey(keys, a.Key) {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		return logx.FormatAttrs(attrs...)
+	}
+	masked := make([]logx.Attr, len(attrs))
+	copy(masked, attrs)
+	for i := range masked {
+		if matchMaskKey(keys, masked[i].Key) {
+			masked[i].Value = "***"
+		}
+	}
+	return logx.FormatAttrs(masked...)
+}
+
+// maskKvs 返回键命中脱敏键集的 kv 拷贝（值替换为 "***"），未命中原样返回
+// （#194：调用 kv 与持久属性共用同一脱敏口径）。
+func maskKvs(keys map[string]struct{}, kvs []any) []any {
+	hit := false
+	for i := 0; i+1 < len(kvs); i += 2 {
+		if matchMaskKey(keys, logx.KeyString(kvs[i])) {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		return kvs
+	}
+	out := make([]any, len(kvs))
+	copy(out, kvs)
+	for i := 0; i+1 < len(out); i += 2 {
+		if matchMaskKey(keys, logx.KeyString(out[i])) {
+			out[i+1] = "***"
+		}
+	}
+	return out
 }
 
 func (l *hlogLogger) WithCtx(ctx context.Context) logx.Logger {
@@ -143,16 +236,24 @@ func (l *hlogLogger) SetLevel(level logx.Level) {
 	hlog.SetLevel(toHlogLevel(level))
 }
 
-// attrPrefix 将持久化属性格式化为可读前缀。
+// attrPrefix 将持久化属性格式化为可读前缀（#194：下沉键集非空时对命中键
+// 脱敏）。
 func (l *hlogLogger) attrPrefix() string {
 	if len(l.Attrs) == 0 {
 		return ""
 	}
+	if l.attrMask != nil {
+		return maskAttrPrefix(l.attrMask, l.Attrs)
+	}
 	return logx.FormatAttrs(l.Attrs...)
 }
 
-// formatKV 合并持久化属性与本次调用的 kv 参数。
+// formatKV 合并持久化属性与本次调用的 kv 参数（#194：下沉键集非空时调用
+// kv 一并脱敏）。
 func (l *hlogLogger) formatKV(keysAndValues ...any) string {
+	if l.attrMask != nil && len(keysAndValues) > 0 {
+		keysAndValues = maskKvs(l.attrMask, keysAndValues)
+	}
 	attrStr := l.attrPrefix()
 	kvStr := logx.FormatKeysAndValues(keysAndValues...)
 	if attrStr == "" {

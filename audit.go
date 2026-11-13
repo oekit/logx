@@ -53,6 +53,17 @@ func (a auditLogger) WithGroup(name string) Logger {
 	return auditLogger{Logger: a.Logger.WithGroup(name)}
 }
 
+// WithAttrKeyMask 实现 AttrKeyMasker（#194）：内部 logger 支持下沉时转发
+// 键集——审计留痕场景同样不得让敏感值绕过过滤直渲；不支持时保持原样
+// （边界见 WithFilter godoc）。
+func (a auditLogger) WithAttrKeyMask(keys map[string]struct{}) Logger {
+	inner := a.Logger
+	if m, ok := inner.(AttrKeyMasker); ok {
+		inner = m.WithAttrKeyMask(keys)
+	}
+	return auditLogger{Logger: inner}
+}
+
 // Unwrap 暴露被包装的内部 logger（#106）：IsHlogBacked 沿 Unwrap 链钻取。
 func (a auditLogger) Unwrap() Logger { return a.Logger }
 

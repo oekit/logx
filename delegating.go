@@ -214,6 +214,22 @@ func (d delegatingLogger) WithGroup(name string) Logger {
 	return delegatingLogger{resolve: func() Logger { return d.resolve().WithGroup(name) }, gate: d.deriveOverride()}
 }
 
+// WithAttrKeyMask 实现 AttrKeyMasker（#194）：解析目标支持下沉时转发键集
+// （每次 resolve 对当下目标施加——Delegating 懒解析，SetDefault 换后端后
+// 新目标同样被下沉）；不支持时保持目标原样（边界见 WithFilter godoc）。
+func (d delegatingLogger) WithAttrKeyMask(keys map[string]struct{}) Logger {
+	return delegatingLogger{
+		resolve: func() Logger {
+			l := d.resolve()
+			if m, ok := l.(AttrKeyMasker); ok {
+				l = m.WithAttrKeyMask(keys)
+			}
+			return l
+		},
+		gate: d.deriveOverride(),
+	}
+}
+
 // Unwrap 暴露当前解析目标（#106）：IsHlogBacked 沿 Unwrap 链向下钻取，
 // Delegating 包装（如 SDK 包级 logger）落到 hlog 后端时递归防御仍生效。
 // 解析目标动态变化（SetDefault 后跟随），钻取取当下值。

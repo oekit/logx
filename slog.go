@@ -35,6 +35,20 @@ type slogLogger struct {
 	// WithGroup("a").WithGroup("b") 是嵌套命名空间 a.b，此前单 string 槽位
 	// 静默只留最后一层。
 	groups []string
+	// attrPrefixes / attrChains 与 Attrs 一一对应（对齐不变量：WithAttrs 是
+	// BaseLogger.Attrs 的唯一追加方，clone 同步拷贝），记录每个持久属性
+	// **挂载时刻**的组前缀快照（#192）：attrPrefixes 是展平前缀（"a.b."，
+	// 内置 JSON 路径直拼，输出时零重算）、attrChains 是组名链（注入 Handler
+	// 路径按它构建嵌套 slog.Group，不拆键、组名可含点）。此前输出时刻才对
+	// 全部累计属性施加最终组前缀，WithAttrs 先于 WithGroup 的属性被错误
+	// 卷入组，违反 slog「subsequent attributes」契约（#192）。切片在
+	// WithAttrs 间共享底层存储（构造后不可变），clone 拷贝外层切片即可。
+	attrPrefixes []string
+	attrChains   [][]string
+	// attrMask 是过滤层下沉的持久属性脱敏键集（#194，AttrKeyMasker）；
+	// nil 表示无脱敏（热路径零开销）。map 由 WithFilter 构造后只读共享，
+	// clone 原样携带（不拷贝）。
+	attrMask map[string]struct{}
 	// handler 非 nil 时走消费方注入的 slog.Handler，由其负责格式与输出；
 	// nil 时走内置 JSON→stdout 路径（json.go）。构造后不可变，clone 时原样携带。
 	// 组链**不**应用到 handler（#99）：框架字段必须留在组外，用户字段经
@@ -87,7 +101,15 @@ func (l *slogLogger) clone() *slogLogger {
 	// #164：「Snapshot + apply + 逐字段重建」上提到 BaseLogger.Derive；
 	// slog 派生对 Attrs 做独立拷贝（历史口径，比 std/hlog 的共享切片更保守），
 	// 经 Derive 的 apply 钩子保留。
-	c := &slogLogger{groups: append([]string(nil), l.groups...), handler: l.handler}
+	// #192/#194：组前缀快照（attrPrefixes/attrChains，内层切片与 groups 一样
+	// 构造后不可变，只拷外层）与脱敏键集（attrMask 只读共享）原样携带。
+	c := &slogLogger{
+		groups:       append([]string(nil), l.groups...),
+		attrPrefixes: append([]string(nil), l.attrPrefixes...),
+		attrChains:   append([][]string(nil), l.attrChains...),
+		attrMask:     l.attrMask,
+		handler:      l.handler,
+	}
 	c.BaseLogger = l.Derive(func(b *BaseLogger) { b.Attrs = append([]Attr(nil), b.Attrs...) })
 	return c
 }
@@ -106,16 +128,65 @@ func (l *slogLogger) WithService(name string) Logger {
 
 func (l *slogLogger) WithAttrs(attrs ...Attr) Logger {
 	c := l.clone()
+	// #192：挂载时刻固化组前缀快照——attrPrefixes/attrChains 与 Attrs 一一
+	// 对齐（WithAttrs 是 Attrs 的唯一追加方）。此前输出时刻才对全部累计
+	// 属性施加最终组前缀，WithAttrs 先于 WithGroup 的属性被错误卷入组，
+	// 违反 slog「subsequent attributes」契约（WithGroup godoc：The keys of
+	// all **subsequent** attributes should be qualified by the group）。
+	prefix := ""
+	if len(c.groups) > 0 {
+		prefix = joinGroups(c.groups)
+	}
+	for range attrs {
+		c.attrPrefixes = append(c.attrPrefixes, prefix)
+		c.attrChains = append(c.attrChains, c.groups) // 共享底层切片（构造后不可变）
+	}
 	c.Attrs = append(c.Attrs, attrs...)
 	return c
+}
+
+// WithAttrKeyMask 实现 AttrKeyMasker（#194）：把过滤层下沉的键集带进自身
+// 与后续派生 clone，在渲染持久 Attrs 的全部路径（内置 JSON / 注入 Handler /
+// printf）对命中键脱敏——FilterKey 对 WithFilter 之前 base 已挂的属性自此
+// 生效。键集**并入**已有键集（WithFilter 嵌套包裹时多个键集叠加生效，
+// TestFilter_MaskSink_DoubleWrap 钉住）；keys 只读共享（WithFilter 构造后
+// 不可变）。
+func (l *slogLogger) WithAttrKeyMask(keys map[string]struct{}) Logger {
+	c := l.clone()
+	c.attrMask = mergeMaskKeys(l.attrMask, keys)
+	return c
+}
+
+// mergeMaskKeys 并入脱敏键集（#194）：无既有键集时直接共享入参 map（只读
+// 契约），否则拷贝并集——入参不得被改写。
+func mergeMaskKeys(base, keys map[string]struct{}) map[string]struct{} {
+	if len(keys) == 0 {
+		return base
+	}
+	if len(base) == 0 {
+		return keys
+	}
+	merged := make(map[string]struct{}, len(base)+len(keys))
+	for k := range base {
+		merged[k] = struct{}{}
+	}
+	for k := range keys {
+		merged[k] = struct{}{}
+	}
+	return merged
 }
 
 // WithGroup 返回带字段命名空间的子 logger（#75 #83 #99）。
 //
 // slog 语义：group 是结构化字段的命名空间，链式调用**累积嵌套**——
 // WithGroup("a").WithGroup("b") 后用户字段落在 "a.b." 命名空间下（此前
-// 单槽位静默只留最后一层）。两条输出路径统一生效，且**框架字段
-// （time/level/message/service/trace_id/caller）都不进组**：
+// 单槽位静默只留最后一层）。**只限定其后的属性**（#192，slog.Handler
+// WithGroup 契约「The keys of all subsequent attributes should be
+// qualified」）：WithGroup 之前经 WithAttrs 挂载的属性保留挂载时刻的
+// 命名空间，不随后续 WithGroup 挪位——
+// `With("before",1).WithGroup("g").With("inside",2)` 输出 before 在组外、
+// inside 在组内，与 stdlib slog 对拍一致。两条输出路径统一生效，且
+// **框架字段（time/level/message/service/trace_id/caller）都不进组**：
 //
 //   - 内置 JSON 路径：用户 Attr/kv 键加 "<g1>.<g2>." 前缀平铺（与
 //     SlogHandler 桥接的 "group.key" 方案同一口径）。
@@ -241,24 +312,19 @@ func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string,
 		attrs = append(attrs, slog.String("caller", caller))
 	}
 
-	// 用户字段（Attr/kv）经 slog.Group 显式包裹组链（#99）：与内置路径
-	// 「框架字段不进组」的层级口径一致；组由 slog.Group 表达、注入的
-	// Handler 原生渲染嵌套结构——此前整体 h.WithGroup 会把上面的框架
-	// 字段一并嵌进组，切后端即换 schema，.service/.trace_id 检索断链。
-	user := make([]slog.Attr, 0, len(l.Attrs)+len(keysAndValues)/2+1)
-	for _, a := range l.Attrs {
-		user = append(user, slog.Any(a.Key, logValue(a.Value)))
+	// #194：脱敏键集下沉（WithFilter 检测 AttrKeyMasker 时设置）——持久
+	// 属性与调用 kv 一并遮蔽，敏感值不得绕过过滤直渲。
+	mask := l.attrMask
+	if mask != nil && len(keysAndValues) > 0 {
+		keysAndValues = maskKvs(mask, keysAndValues)
 	}
-	for i := 0; i+1 < len(keysAndValues); i += 2 {
-		user = append(user, slog.Any(keyString(keysAndValues[i]), logValue(keysAndValues[i+1]))) // #174 string 键直取
-	}
-	if len(keysAndValues)%2 == 1 {
-		user = append(user, slog.Any(keyString(keysAndValues[len(keysAndValues)-1]), "(MISSING)"))
-	}
-	for i := len(l.groups) - 1; i >= 0; i-- {
-		user = []slog.Attr{{Key: l.groups[i], Value: slog.GroupValue(user...)}}
-	}
-	attrs = append(attrs, user...)
+
+	// 用户字段（Attr/kv）按**挂载时刻**的组链经 slog.Group 显式包裹（#192）：
+	// 持久属性用各自的 attrChains 快照、调用 kv 用当前组链——WithAttrs 先于
+	// WithGroup 的属性留在组外（slog「subsequent attributes」契约），WithGroup
+	// 之后的属性照旧进组（#99 口径不变）；框架字段不进组。组由 slog.Group
+	// 表达、注入的 Handler 原生渲染嵌套结构。
+	attrs = append(attrs, buildNestedUserAttrs(l, mask, keysAndValues)...)
 
 	rec := slog.NewRecord(ts, slogLevel(level), msg, pc)
 	rec.AddAttrs(attrs...)
@@ -272,6 +338,107 @@ func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string,
 				err, msg)
 		}
 	}
+}
+
+// buildNestedUserAttrs 构建注入 Handler 路径的用户字段（#192）：持久属性按
+// 各自挂载时刻的组链、调用 kv 按当前组链，经 groupNest 合成嵌套结构。
+func buildNestedUserAttrs(l *slogLogger, mask map[string]struct{}, keysAndValues []any) []slog.Attr {
+	var n groupNest
+	for i, a := range l.Attrs {
+		v := logValue(a.Value)
+		if mask != nil && matchMaskKey(mask, a.Key) {
+			v = "***"
+		}
+		chain := l.groups // 防御：快照缺失时退回旧行为（整体进当前组链）
+		if i < len(l.attrChains) {
+			chain = l.attrChains[i]
+		}
+		n.add(chain, slog.Any(a.Key, v))
+	}
+	for i := 0; i+1 < len(keysAndValues); i += 2 {
+		n.add(l.groups, slog.Any(keyString(keysAndValues[i]), logValue(keysAndValues[i+1]))) // #174 string 键直取
+	}
+	if len(keysAndValues)%2 == 1 {
+		n.add(l.groups, slog.Any(keyString(keysAndValues[len(keysAndValues)-1]), "(MISSING)"))
+	}
+	return n.build()
+}
+
+// groupNest 按「挂载时刻组链」把属性流构建成嵌套 slog.Group 结构（#192）。
+//
+// 组链沿构造链单调延伸（WithGroup 只增不减），深层组链的属性合并进已开
+// 的同名组——此前 emitToHandler 把全部累计属性整体包进最终组链，WithAttrs
+// 先于 WithGroup 的属性被错误卷入组，与 stdlib 分叉（#192）。空组不落
+// （stdlib 约定：JSONHandler/TextHandler 本就丢弃空组）。
+type groupNest struct {
+	root  []slog.Attr
+	stack []groupFrame
+}
+
+type groupFrame struct {
+	name  string
+	attrs []slog.Attr
+}
+
+func (n *groupNest) add(chain []string, a slog.Attr) {
+	for len(n.stack) > len(chain) {
+		n.pop()
+	}
+	for len(n.stack) < len(chain) {
+		n.stack = append(n.stack, groupFrame{name: chain[len(n.stack)]})
+	}
+	if len(n.stack) > 0 {
+		top := &n.stack[len(n.stack)-1]
+		top.attrs = append(top.attrs, a)
+		return
+	}
+	n.root = append(n.root, a)
+}
+
+// pop 关闭最内层组：空组丢弃；非空组合成 GroupValue 挂进父级（或顶层）。
+func (n *groupNest) pop() {
+	f := n.stack[len(n.stack)-1]
+	n.stack = n.stack[:len(n.stack)-1]
+	if len(f.attrs) == 0 {
+		return
+	}
+	ga := slog.Attr{Key: f.name, Value: slog.GroupValue(f.attrs...)}
+	if len(n.stack) > 0 {
+		top := &n.stack[len(n.stack)-1]
+		top.attrs = append(top.attrs, ga)
+		return
+	}
+	n.root = append(n.root, ga)
+}
+
+func (n *groupNest) build() []slog.Attr {
+	for len(n.stack) > 0 {
+		n.pop()
+	}
+	return n.root
+}
+
+// stampedAttrs 返回持久属性的降级面拷贝（仅 marshalFallback 冷路径调用，
+// #193）：键按挂载时刻的组前缀固化（#192），值按脱敏键集遮蔽（#194）。
+func (l *slogLogger) stampedAttrs() []Attr {
+	if len(l.Attrs) == 0 {
+		return nil
+	}
+	out := make([]Attr, len(l.Attrs))
+	for i, a := range l.Attrs {
+		v := logValue(a.Value)
+		if l.attrMask != nil && matchMaskKey(l.attrMask, a.Key) {
+			v = "***"
+		}
+		k := a.Key
+		if i < len(l.attrPrefixes) {
+			k = l.attrPrefixes[i] + a.Key
+		} else if len(l.groups) > 0 {
+			k = joinGroups(l.groups) + a.Key
+		}
+		out[i] = Attr{Key: k, Value: v}
+	}
+	return out
 }
 
 // logxBridge 是 slogBridgeSink 的实现（#84）：SlogHandler 桥接直通入口，
