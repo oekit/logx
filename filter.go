@@ -172,12 +172,20 @@ type filterLogger struct {
 	// 编码约定（存 Level+1、0=未设置）与 pass/set/derive 实现收敛在
 	// wrapper.go 的 levelGate（#162），与 delegatingLogger 共用。
 	gate *levelGate
+	// groupChain 是 WithGroup 的组链（logx#224）：FilterKey 的点路径示例
+	// （"user.password"）在 WithGroup("user") 后必须命中本地键 "password"
+	// ——此前过滤只看本地键，点路径永不命中 ⇒ 脱敏 fail-open（安全控制
+	// 静默失效，方向与 FilterKey 的存在理由相反）。
+	groupChain []string
 }
 
 // derive 派生子 logger 时继承父实例的级别下限（#101）：拷贝当前值，
 // 派生后父子各自独立（后端 clone 拷 Level 同语义）。
 func (f *filterLogger) derive(child *filterLogger) *filterLogger {
 	child.gate = f.gate.deriveChild()
+	if child.groupChain == nil {
+		child.groupChain = f.groupChain
+	}
 	return child
 }
 
@@ -185,6 +193,22 @@ func (f *filterLogger) derive(child *filterLogger) *filterLogger {
 // （base 自身的级别过滤仍生效，有效级别取两者更严者）。
 func (f *filterLogger) pass(level Level) bool {
 	return f.gate.pass(level)
+}
+
+// matchKeyScoped 判定本地键或「组链拼接键」命中（logx#224）：
+// FilterKey godoc 的点路径示例（"user.password"）在 WithGroup("user") 后
+// 必须命中本地键 "password"——组前缀由 base 在 emit 时才加，只比对本地
+// 键则点路径永不命中、敏感值原样落盘（脱敏 fail-open）。
+// 双命中口径：裸键名与完整点路径都脱敏——配 "password" 与配
+// "user.password" 的用户都得到预期保护。
+func (f *filterLogger) matchKeyScoped(local string) bool {
+	if f.cfg.matchKey(local) {
+		return true
+	}
+	if len(f.groupChain) == 0 {
+		return false
+	}
+	return f.cfg.matchKey(joinGroups(f.groupChain) + local)
 }
 
 // filterKvs 返回脱敏后的 kv 切片（不入参原切片）。
@@ -197,7 +221,7 @@ func (f *filterLogger) filterKvs(kvs []any) []any {
 	for i := 0; i+1 < len(out); i += 2 {
 		// #85：键统一按 %v 归一（非 string 键与 emit 侧键口径一致），
 		// 命中判定大小写不敏感；#174 string 键直取免反射。
-		if f.cfg.matchKey(keyString(out[i])) {
+		if f.matchKeyScoped(keyString(out[i])) {
 			out[i+1] = "***"
 		}
 	}
@@ -419,9 +443,10 @@ func (f *filterLogger) maskAttrs(attrs []Attr) []Attr {
 	}
 	out := make([]Attr, len(attrs))
 	copy(out, attrs)
-	// #85：键匹配大小写不敏感，与 filterKvs 同一口径。
+	// #85：键匹配大小写不敏感，与 filterKvs 同一口径；
+	// logx#224：组链拼接键双命中（点路径示例在 WithGroup 下必须生效）。
 	for i := range out {
-		if f.cfg.matchKey(out[i].Key) {
+		if f.matchKeyScoped(out[i].Key) {
 			out[i].Value = "***"
 		}
 	}
@@ -429,7 +454,9 @@ func (f *filterLogger) maskAttrs(attrs []Attr) []Attr {
 }
 
 func (f *filterLogger) WithGroup(name string) Logger {
-	return f.derive(&filterLogger{base: f.base.WithGroup(name), cfg: f.cfg})
+	child := f.derive(&filterLogger{base: f.base.WithGroup(name), cfg: f.cfg})
+	child.groupChain = append(append([]string(nil), f.groupChain...), name)
+	return child
 }
 
 // WithAttrKeyMask 实现 AttrKeyMasker（#194）：把下沉键集继续传给底座，

@@ -2,6 +2,7 @@ package logx
 
 import (
 	"context"
+	"sync/atomic"
 )
 
 // Delegating 返回一个懒解析的 Logger：每次调用时才解析当前 Default()，
@@ -30,12 +31,40 @@ func Delegating(component string) Logger {
 	d := delegatingLogger{resolve: Default, gate: &levelGate{}}
 	if component != "" {
 		name := component
+		// logx#221：缓存「Default 单元 + 按 component 构造的子 logger」——
+		// 此前每条日志都 Default()(atomic load) → WithAttrs → 对 std 后端 =
+		// Snapshot()(全进程单实例 Mutex)+ 两次分配、对 slog = clone()(Mutex+
+		// 3 次 append)，高 QPS 下每条日志固定锁争用与分配，而 Enabled 守卫
+		// 只挡级别、不挡这次 resolve。SetDefault 换指针即自动失效。
+		// 整对(cached)单指针原子存取——分两个 atomic 字段会有「src 与 child
+		// 来自不同代」的错配窗口。
+		cache := &componentCache{}
 		d.resolve = func() Logger {
-			return Default().WithAttrs(Attr{Key: "component", Value: name})
+			cur := defaultLoggerV.Load()
+			if e := cache.load(); e != nil && e.src == cur {
+				return e.child
+			}
+			child := Default().WithAttrs(Attr{Key: "component", Value: name})
+			cache.store(&cachedComponent{src: cur, child: child})
+			return child
 		}
 	}
 	return d
 }
+
+// cachedComponent 是 Delegating 的一次解析结果与它对应的 Default 单元
+// （defaultLoggerV 的指针身份即代际——SetDefault 每次 Store 新指针）。
+type cachedComponent struct {
+	src   *Logger
+	child Logger
+}
+
+type componentCache struct {
+	v atomic.Pointer[cachedComponent]
+}
+
+func (c *componentCache) load() *cachedComponent   { return c.v.Load() }
+func (c *componentCache) store(e *cachedComponent) { c.v.Store(e) }
 
 // delegatingLogger 在每次调用时通过 resolve 解析目标 Logger 并转发，
 // 自身不持有任何后端状态；唯一的本地状态是实例级级别下限（#81）。
@@ -207,7 +236,12 @@ func (d delegatingLogger) WithService(name string) Logger {
 }
 
 func (d delegatingLogger) WithAttrs(attrs ...Attr) Logger {
-	return delegatingLogger{resolve: func() Logger { return d.resolve().WithAttrs(attrs...) }, gate: d.deriveOverride()}
+	// logx#220：派生时拷贝入参切片——Go 变参传切片不拷贝，闭包捕获原底层数组
+	// ⇒ 调用方复用/改写（`as[0].Value = v2`、append 触发共享写）会静默改掉
+	// 已派生子 logger 的字段，且换 SetDefault(slog/std 后端为拷贝语义)后行为
+	// 不同——切后端引入静默字段漂移。与 slogLogger.clone 同款拷贝。
+	copied := append([]Attr(nil), attrs...)
+	return delegatingLogger{resolve: func() Logger { return d.resolve().WithAttrs(copied...) }, gate: d.deriveOverride()}
 }
 
 func (d delegatingLogger) WithGroup(name string) Logger {

@@ -103,10 +103,34 @@ func (h *traceHandler) WithGroup(name string) slog.Handler {
 
 // hasKey 检查记录里是否已显式携带同名字段（有则不重复注入）；
 // WithAttrs 带入的键由 traceHandler.hasWithKey 一并判定（#104）。
+//
+// 递归下钻 slog.Group（logx#219）：`WithGroup("req").Info(m, "trace_id", tid)`
+// 的记录里 trace_id 在组内（顶层 attr 是 {"req": GroupValue(...)}），
+// r.Attrs 不下钻是 slog 语义——只看顶层会判「没有」而重复注入，输出同时
+// 有顶层与组内两个 trace_id，Loki/ES 取值依解析器而定（#129 注释点名的
+// 同族风险的第 3 个入口）。
 func hasKey(r slog.Record, key string) bool {
 	found := false
+	var walk func(attrs []slog.Attr) bool
+	walk = func(attrs []slog.Attr) bool {
+		for _, a := range attrs {
+			if a.Key == key {
+				return true
+			}
+			if a.Value.Kind() == slog.KindGroup {
+				if walk(a.Value.Group()) {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	r.Attrs(func(a slog.Attr) bool {
 		if a.Key == key {
+			found = true
+			return false
+		}
+		if a.Value.Kind() == slog.KindGroup && walk(a.Value.Group()) {
 			found = true
 			return false
 		}
