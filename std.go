@@ -146,10 +146,12 @@ func (l *stdLogger) WithAttrs(attrs ...Attr) Logger {
 	for range attrs {
 		np = append(np, gp)
 	}
-	derived := l.withBase(func(cp *BaseLogger) { cp.Attrs = cp.MergeAttrs(attrs...) })
+	// 直接 Derive（字段级重建不拷 Mutex）——经 withBase 再抽 .BaseLogger
+	// 会按值复制含 sync.Mutex 的 BaseLogger（go vet copylocks）。
 	return &stdLogger{
-		BaseLogger: derived.(*stdLogger).BaseLogger, attrMask: l.attrMask,
-		groups: l.groups, attrPrefixes: np,
+		BaseLogger: l.Derive(func(cp *BaseLogger) { cp.Attrs = cp.MergeAttrs(attrs...) }),
+		attrMask:   l.attrMask,
+		groups:     l.groups, attrPrefixes: np,
 	}
 }
 
@@ -277,19 +279,6 @@ func prefixKvKeys(kvs []any, gp string) []any {
 	return out
 }
 
-// formatAttrsAndKV 合并持久化属性与本次调用的 kv 参数（与 hlog/slog 后端一致）。
-func formatAttrsAndKV(attrs []Attr, keysAndValues ...any) string {
-	attrStr := FormatAttrs(attrs...)
-	kvStr := FormatKeysAndValues(keysAndValues...)
-	if attrStr == "" {
-		return kvStr
-	}
-	if kvStr == "" {
-		return attrStr
-	}
-	return attrStr + " " + kvStr
-}
-
 func (l *stdLogger) logf(level Level, ctx context.Context, format string, args ...any) {
 	ctx = CtxOrBackground(ctx) // #97：Ctx* 入参 nil ctx 统一兜底
 	if !l.ShouldLog(level) {
@@ -301,7 +290,7 @@ func (l *stdLogger) logf(level Level, ctx context.Context, format string, args .
 	// printf 路径同样携带持久属性（#77）：此前 logf 不合并 l.Attrs——同一
 	// logger 上 Info 带 request_id、Infof 不带，字段面按方法族分裂，依赖
 	// 持久属性做审计/追踪的调用方在 printf 路径静默丢字段。
-	// #165：属性拼装与结构化路径（log）统一走 formatAttrsAndKV，消除
+	// #165：属性拼装与结构化路径（log）统一走同族格式化函数，消除
 	// printf/结构化两条路径的残留分叉（无 kv 参数时即纯属性串，输出不变）。
 	// #194：下沉键集非空时持久属性同样脱敏（printf 无调用 kv 可脱敏，
 	// #80 口径）。
