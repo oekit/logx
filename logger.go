@@ -77,9 +77,9 @@ type LevelEnabler interface {
 // 被级别过滤掉的事件零成本跳过：
 //
 //	if !logx.Enabled(l, logx.LevelDebug) {
-//	    return // 跳过 truncateForLog(body) 等昂贵求值
+//	    return // 跳过 TruncateForLog(body) 等昂贵求值
 //	}
-//	l.Debug("transport response body", "body", truncateForLog(body, 2048))
+//	l.Debug("transport response body", "body", logx.TruncateForLog(body, 2048))
 func Enabled(logger Logger, level Level) bool {
 	if le, ok := logger.(LevelEnabler); ok {
 		return le.Enabled(level)

@@ -472,9 +472,13 @@ func slogLevel(level Level) slog.Level {
 // panic 收敛成 %!v(PANIC=...) 字面量、日志调用正常返回）。
 func logValue(v any) any {
 	if err, ok := v.(error); ok {
-		return errString(err)
+		v = errString(err)
 	}
-	return v
+	// logx#223：emit 侧值截断（SetMaxValueLen，默认关闭零开销）——
+	// 本函数是 json/slog 两后端全部值渲染的收口点（attrs 与 kv 共 5 处
+	// 调用），超限 string/[]byte 就地截断并带自描述尾巴。
+	t, _ := truncateValue(v)
+	return t
 }
 
 // errString 取 err.Error() 文本并对 panic 隔离（#137）：Error() 实现里会

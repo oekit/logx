@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,16 @@ type stdLogger struct {
 	// nil 表示无脱敏。map 由 WithFilter 构造后只读共享，withBase 派生
 	// 原样携带（不拷贝）。
 	attrMask map[string]struct{}
+	// groups 是 WithGroup 的组链（logx#222）：std 后端此前是空函数 no-op，
+	// 组名无声消失——同一段代码在 slog 后端输出 user.password、std 后端
+	// 平铺 password，字段布局按后端漂移且零信号（「静默丢弃比报错更贵」）。
+	// 平铺前缀口径与 json/slog 后端的 joinGroups 一致。
+	groups []string
+	// attrPrefixes 与 Attrs 平行：每个持久属性**挂载时刻**的组前缀
+	// （logx#222，slog 后端 attrPrefixes #192 同款）——WithAttrs 挂在
+	// WithGroup 之前的属性保持顶层，之后的进组；快照缺失时（理论不可达）
+	// 退回当前组前缀（json.go 同款防御）。
+	attrPrefixes []string
 }
 
 // stdLogDynamicWriter 在**每次写入时**解析当前标准库 log 的输出目标
@@ -101,7 +112,10 @@ func NewStdLogger(service string, level ...Level) Logger {
 func (l *stdLogger) withBase(apply func(cp *BaseLogger)) Logger {
 	// #164：Snapshot + apply + 逐字段重建上提到 BaseLogger.Derive
 	// #194：attrMask 只读共享（构造后不可变），派生原样携带
-	return &stdLogger{BaseLogger: l.Derive(apply), attrMask: l.attrMask}
+	return &stdLogger{
+		BaseLogger: l.Derive(apply), attrMask: l.attrMask,
+		groups: l.groups, attrPrefixes: l.attrPrefixes,
+	}
 }
 
 // WithAttrKeyMask 实现 AttrKeyMasker（#194）：把过滤层下沉的键集带进自身
@@ -124,12 +138,36 @@ func (l *stdLogger) WithService(name string) Logger {
 
 // WithAttrs 返回携带固定属性的子 logger。
 func (l *stdLogger) WithAttrs(attrs ...Attr) Logger {
-	return l.withBase(func(cp *BaseLogger) { cp.Attrs = cp.MergeAttrs(attrs...) })
+	// logx#222：挂载时刻把当前组前缀记入 attrPrefixes（与 Attrs 平行）——
+	// 组前缀只对「之后」挂载的属性生效（slog「subsequent attributes」契约）。
+	gp := l.groupPrefix()
+	np := make([]string, 0, len(l.attrPrefixes)+len(attrs))
+	np = append(np, l.attrPrefixes...)
+	for range attrs {
+		np = append(np, gp)
+	}
+	// 直接 Derive（字段级重建不拷 Mutex）——经 withBase 再抽 .BaseLogger
+	// 会按值复制含 sync.Mutex 的 BaseLogger（go vet copylocks）。
+	return &stdLogger{
+		BaseLogger: l.Derive(func(cp *BaseLogger) { cp.Attrs = cp.MergeAttrs(attrs...) }),
+		attrMask:   l.attrMask,
+		groups:     l.groups, attrPrefixes: np,
+	}
 }
 
-// WithGroup stdLogger 降级实现不支持分组。
+// WithGroup 记录组链，输出按 joinGroups 平铺前缀（logx#222）：
+// 此前是空函数 no-op——组名无声消失，与 slog 后端同代码输出 schema 不同
+// （字段布局按后端漂移，依赖组路径的检索/脱敏静默失效）。零值/空组名
+// 保持原样。
 func (l *stdLogger) WithGroup(name string) Logger {
-	return l.withBase(func(cp *BaseLogger) {})
+	if name == "" {
+		return l
+	}
+	return &stdLogger{
+		BaseLogger: l.Derive(func(*BaseLogger) {}), attrMask: l.attrMask,
+		groups:       append(append([]string(nil), l.groups...), name),
+		attrPrefixes: l.attrPrefixes,
+	}
 }
 
 // buildPrefix 构造 std 后端的行前缀（#165）：log/logf 此前各持一份相同的
@@ -160,8 +198,30 @@ func (l *stdLogger) log(level Level, ctx context.Context, msg string, keysAndVal
 	if l.attrMask != nil && len(keysAndValues) > 0 {
 		keysAndValues = maskKvs(l.attrMask, keysAndValues)
 	}
+	// logx#223：emit 侧值截断（默认关闭）
+	if a2, ok := truncateAttrs(attrs); ok {
+		attrs = a2
+	}
+	if k2, ok := truncateKvs(keysAndValues); ok {
+		keysAndValues = k2
+	}
 
-	kvStr := formatAttrsAndKV(attrs, keysAndValues...)
+	// logx#222：组链平铺前缀——属性按挂载时刻前缀、调用 kv 按当前组链
+	// 前缀（与 json/slog 后端 joinGroups 口径一致）。
+	gp := l.groupPrefix()
+	if gp != "" {
+		keysAndValues = prefixKvKeys(keysAndValues, gp)
+	}
+	kvStr := formatAttrsGrouped(attrs, l.attrPrefixes, gp)
+	if len(keysAndValues) > 0 {
+		if s := FormatKeysAndValues(keysAndValues...); s != "" {
+			if kvStr != "" {
+				kvStr += " " + s
+			} else {
+				kvStr = s
+			}
+		}
+	}
 	if kvStr != "" {
 		stdWriter.Printf("%s %s %s", prefix, msg, kvStr)
 	} else {
@@ -169,17 +229,54 @@ func (l *stdLogger) log(level Level, ctx context.Context, msg string, keysAndVal
 	}
 }
 
-// formatAttrsAndKV 合并持久化属性与本次调用的 kv 参数（与 hlog/slog 后端一致）。
-func formatAttrsAndKV(attrs []Attr, keysAndValues ...any) string {
-	attrStr := FormatAttrs(attrs...)
-	kvStr := FormatKeysAndValues(keysAndValues...)
-	if attrStr == "" {
-		return kvStr
+// groupPrefix 返回当前组链的平铺前缀；无组返回空串。
+// ⚠️ joinGroups 对空输入也返回 "."（json 后端靠 len(groups)>0 守卫），
+// std 侧调用一律走本方法（logx#222 实现期实测）。
+func (l *stdLogger) groupPrefix() string {
+	if len(l.groups) == 0 {
+		return ""
 	}
-	if kvStr == "" {
-		return attrStr
+	return joinGroups(l.groups)
+}
+
+// formatAttrsGrouped 按挂载时刻前缀渲染持久属性（logx#222）：前缀取
+// attrPrefixes[i]（WithAttrs 挂载时的组链），快照缺失（理论不可达——
+// 构造期 Attrs 为空、之后只经 WithAttrs 增长）退回当前组前缀 gp
+// （json.go 同款防御）。gp 与全部前缀为空时输出与 FormatAttrs 逐字节一致。
+func formatAttrsGrouped(attrs []Attr, attrPrefixes []string, gp string) string {
+	if len(attrs) == 0 {
+		return ""
 	}
-	return attrStr + " " + kvStr
+	if gp == "" && len(attrPrefixes) == 0 {
+		return FormatAttrs(attrs...)
+	}
+	var sb strings.Builder
+	for i, a := range attrs {
+		if i > 0 {
+			sb.WriteByte(' ')
+		}
+		p := gp
+		if i < len(attrPrefixes) {
+			p = attrPrefixes[i]
+		}
+		sb.WriteString(p)
+		sb.WriteString(a.Key)
+		sb.WriteByte('=')
+		fmt.Fprintf(&sb, "%v", a.Value)
+	}
+	return sb.String()
+}
+
+// prefixKvKeys 把调用 kv 的键加上组前缀（logx#222，拷贝不改入参——
+// #220 同款「不持有调用方切片」纪律）。非 string 键经 keyString 归一
+// （与 json/slog 平铺口径一致）。
+func prefixKvKeys(kvs []any, gp string) []any {
+	out := make([]any, len(kvs))
+	copy(out, kvs)
+	for i := 0; i < len(out); i += 2 {
+		out[i] = gp + keyString(out[i])
+	}
+	return out
 }
 
 func (l *stdLogger) logf(level Level, ctx context.Context, format string, args ...any) {
@@ -193,7 +290,7 @@ func (l *stdLogger) logf(level Level, ctx context.Context, format string, args .
 	// printf 路径同样携带持久属性（#77）：此前 logf 不合并 l.Attrs——同一
 	// logger 上 Info 带 request_id、Infof 不带，字段面按方法族分裂，依赖
 	// 持久属性做审计/追踪的调用方在 printf 路径静默丢字段。
-	// #165：属性拼装与结构化路径（log）统一走 formatAttrsAndKV，消除
+	// #165：属性拼装与结构化路径（log）统一走同族格式化函数，消除
 	// printf/结构化两条路径的残留分叉（无 kv 参数时即纯属性串，输出不变）。
 	// #194：下沉键集非空时持久属性同样脱敏（printf 无调用 kv 可脱敏，
 	// #80 口径）。
@@ -201,7 +298,11 @@ func (l *stdLogger) logf(level Level, ctx context.Context, format string, args .
 	if l.attrMask != nil && len(attrs) > 0 {
 		attrs = maskAttrsSlice(l.attrMask, attrs)
 	}
-	if kvStr := formatAttrsAndKV(attrs); kvStr != "" {
+	// logx#223：emit 侧值截断（默认关闭）
+	if a2, ok := truncateAttrs(attrs); ok {
+		attrs = a2
+	}
+	if kvStr := formatAttrsGrouped(attrs, l.attrPrefixes, l.groupPrefix()); kvStr != "" {
 		stdWriter.Printf("%s %s %s", prefix, msg, kvStr)
 		return
 	}

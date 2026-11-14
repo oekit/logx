@@ -168,3 +168,43 @@ func levelName(l Level) string {
 		return "INFO"
 	}
 }
+
+// logx#224：FilterKey 点路径在 WithGroup 下必须命中——此前过滤只比对
+// 本地键，"user.password" 对本地键 "password" 永不命中 ⇒ 脱敏 fail-open
+// （安全控制静默失效，方向与 FilterKey 的存在理由相反）。
+func TestFilterKeyDotPathWithGroup(t *testing.T) {
+	// kv 路径：点路径配置
+	base := &fakeLogger{}
+	l := WithFilter(base, FilterKey("user.password"))
+	l.WithGroup("user").Info("login", "password", "s3cret")
+	if strings.Contains(base.text(), "s3cret") {
+		t.Fatalf("点路径 FilterKey 在 WithGroup 下未命中,敏感值泄漏: %s", base.text())
+	}
+	if !strings.Contains(base.text(), "***") {
+		t.Fatalf("redacted marker missing: %s", base.text())
+	}
+
+	// 裸键名配置在组内同样受保护（双命中口径）
+	base2 := &fakeLogger{}
+	l2 := WithFilter(base2, FilterKey("password"))
+	l2.WithGroup("user").Info("login", "password", "s3cret2")
+	if strings.Contains(base2.text(), "s3cret2") {
+		t.Fatalf("裸键在组内也应脱敏: %s", base2.text())
+	}
+
+	// WithAttrs 路径：maskAttrs 同走组链双命中
+	fl, ok := l.(*filterLogger)
+	if !ok {
+		t.Fatalf("WithFilter 应返回 *filterLogger, got %T", l)
+	}
+	grp := fl.WithGroup("user").(*filterLogger)
+	attrs := grp.maskAttrs([]Attr{{Key: "password", Value: "s3cret3"}})
+	if attrs[0].Value != "***" {
+		t.Fatalf("maskAttrs 组内属性未脱敏: %v", attrs[0].Value)
+	}
+	// 组外属性不受影响（本地键不命中点路径时保持原值）
+	attrs2 := fl.maskAttrs([]Attr{{Key: "username", Value: "alice"}})
+	if attrs2[0].Value != "alice" {
+		t.Fatalf("非敏感属性被误脱敏: %v", attrs2[0].Value)
+	}
+}
