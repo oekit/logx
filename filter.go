@@ -36,11 +36,6 @@ func FilterKey(keys ...string) FilterOption {
 	}
 }
 
-// matchKey 判定键名是否命中过滤键（#85）：大小写不敏感。
-func (c *filterConfig) matchKey(key string) bool {
-	return MatchMaskKey(c.keys, key)
-}
-
 // MatchMaskKey 判定键名是否命中脱敏键集（#85）：大小写不敏感——HTTP 头的
 // 规范键名是 Authorization/X-Api-Key，安全控制不应要求消费方逐大小写枚举。
 // 键集通常只有个位数条目，线性 EqualFold 比下小写归一的 map 查找省一次分配。
