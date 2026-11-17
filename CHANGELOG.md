@@ -2,6 +2,12 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.12.0] — 2026-11-18
+
+- 安全修复:渲染面脱敏补组链前缀双匹配,FilterKey 点路径配置下裸键不再 fail-open 明文落盘(#224 后包装层/渲染层口径重对齐)(#229);根包导出脱敏工具面 MergeMaskKeys/MatchMaskKey/MaskKvs/MaskAttrs,hlog 删 4 份逐字副本(#230);prefixKvKeys/prefixedKvs 双份合一,trace_id 字面量常量化 TraceIDFieldKey(#231)
+
+关联问题单：logx#229、logx#230、logx#231。
+
 ## [v0.11.0] — 2026-11-13
 
 - 日志门面契约批：组挂载序契约（WithAttrs 先于 WithGroup 属性归位 #192）、序列化降级补 time 字段与组前缀（#193）、FilterKey 对 WithFilter 前 base 属性生效 + AttrKeyMasker 键集下沉三后端（#194）、JSON 时间戳 AppendFormat 直写移除中间串分配（#195）；kv 热路径 string 直取零分配（#174）、FormatWithTraceID/FormatAttrs 补测（#175）、kitexlog interface{}→any 清扫（#176）、NewRotatingSink 构造期校验（#177）、NewMultiSink godoc 与实现对齐（#179）、shutdown 兼容层删除（#180，**BREAKING** 迁移路径 lifecycle.Manager）、LOG_LEVEL 补 OFF 档（#181）
