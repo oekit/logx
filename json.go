@@ -89,9 +89,11 @@ func (l *slogLogger) emitBuiltinJSON(ctx context.Context, level Level, msg strin
 		groupPrefix = joinGroups(l.groups)
 	}
 	// #194：脱敏键集非空时先对调用 kv 脱敏（命中才拷贝）——字段渲染与降级
-	// rawKv 共用同一份已脱敏 kv，敏感值不得经 rawKv 旁路落盘。
+	// rawKv 共用同一份已脱敏 kv，敏感值不得经 rawKv 旁路落盘。logx#229：
+	// kv 键渲染时施加当前组前缀，脱敏按「裸键 + 前缀键」双匹配——配点路径
+	// FilterKey 时组内裸键 kv 在渲染面同样命中。
 	if l.attrMask != nil && len(keysAndValues) > 0 {
-		keysAndValues = maskKvs(l.attrMask, keysAndValues)
+		keysAndValues = MaskKvs(l.attrMask, groupPrefix, keysAndValues)
 	}
 
 	bp := jsonBufPool.Get().(*[]byte)
@@ -109,7 +111,7 @@ func (l *slogLogger) emitBuiltinJSON(ctx context.Context, level Level, msg strin
 		fields = append(fields, jsonField{"service", l.Service})
 	}
 	if traceID := ExtractTrace(ctx); traceID != "" {
-		fields = append(fields, jsonField{"trace_id", traceID})
+		fields = append(fields, jsonField{TraceIDFieldKey, traceID})
 	}
 	var caller string
 	if pc != 0 {
@@ -134,16 +136,13 @@ func (l *slogLogger) emitBuiltinJSON(ctx context.Context, level Level, msg strin
 		fields = setField(fields, full, v)
 	}
 	for i, a := range l.Attrs {
-		v := logValue(a.Value)
-		if l.attrMask != nil && matchMaskKey(l.attrMask, a.Key) {
-			v = "***"
-		}
 		// #192：前缀在挂载时刻已固化；空前缀拼接零分配（runtime 快路径）
-		prefix := ""
-		if i < len(l.attrPrefixes) {
-			prefix = l.attrPrefixes[i]
-		} else if len(l.groups) > 0 {
-			prefix = groupPrefix // 防御：快照缺失时退回旧行为
+		prefix := attrMountPrefix(i, l.attrPrefixes, groupPrefix)
+		v := logValue(a.Value)
+		// #194/logx#229：持久属性按下沉键集脱敏——裸键 + 挂载组前缀键双
+		// 匹配（配点路径 FilterKey 时组内属性同样命中）。
+		if l.attrMask != nil && matchMaskKeyScoped(l.attrMask, prefix, a.Key) {
+			v = "***"
 		}
 		put(prefix+a.Key, a.Key, v)
 	}
@@ -190,6 +189,17 @@ func joinGroups(groups []string) string {
 	return string(out) + "."
 }
 
+// groupsPrefix 返回组链的平铺前缀（"a"+"b" → "a.b."）；无组返回空串。
+// ⚠️ joinGroups 对空输入也返回 "."，取前缀一律经本函数（std 后端
+// groupPrefix 方法同款守卫，logx#222 实现期实测；logx#229 渲染面脱敏的
+// 前缀入参同样依赖空串语义——空串才会在 matchMaskKeyScoped 退化裸键匹配）。
+func groupsPrefix(groups []string) string {
+	if len(groups) == 0 {
+		return ""
+	}
+	return joinGroups(groups)
+}
+
 // appendRecordJSON 把有序字段表编码为一个 JSON 对象（不含换行）。
 // 任一值不可序列化时返回 error——调用方降级到 marshalFallback，绝不静默
 // 丢弃整条日志（#79/#100 同一口径）。
@@ -234,7 +244,7 @@ func marshalFallback(fields []jsonField, ts time.Time, level Level, msg string, 
 		{key: "marshalErr", val: marshalErr.Error()},
 		{key: "rawKv", val: FormatKeysAndValues(prefixedKvs(groupPrefix, keysAndValues)...)},
 	}
-	for _, k := range [...]string{"service", "trace_id", "caller"} {
+	for _, k := range [...]string{"service", TraceIDFieldKey, "caller"} {
 		for _, f := range fields {
 			if f.key == k {
 				if s, ok := f.val.(string); ok {
@@ -399,7 +409,7 @@ func appendJSONString(dst []byte, s string) []byte {
 // 初始化后只读，并发访问安全。
 var reservedFields = map[string]bool{
 	"time": true, "level": true, "message": true,
-	"service": true, "trace_id": true, "caller": true,
+	"service": true, TraceIDFieldKey: true, "caller": true,
 }
 
 // htmlSafeSet 标记 ASCII 码位是否无需转义（encoding/json safeSet 同表）：

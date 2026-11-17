@@ -38,14 +38,16 @@ func FilterKey(keys ...string) FilterOption {
 
 // matchKey 判定键名是否命中过滤键（#85）：大小写不敏感。
 func (c *filterConfig) matchKey(key string) bool {
-	return matchMaskKey(c.keys, key)
+	return MatchMaskKey(c.keys, key)
 }
 
-// matchMaskKey 判定键名是否命中脱敏键集（#85）：大小写不敏感。键集通常只有
-// 个位数条目，线性 EqualFold 比下小写归一的 map 查找省一次分配。
+// MatchMaskKey 判定键名是否命中脱敏键集（#85）：大小写不敏感——HTTP 头的
+// 规范键名是 Authorization/X-Api-Key，安全控制不应要求消费方逐大小写枚举。
+// 键集通常只有个位数条目，线性 EqualFold 比下小写归一的 map 查找省一次分配。
 // 包装层（filterKvs/maskAttrs）与后端渲染面（AttrKeyMasker 下沉，#194）共用
-// 同一口径。
-func matchMaskKey(keys map[string]struct{}, key string) bool {
+// 本判定。#230 导出：hlog 子包此前逐字复制三份 helper（注释自认「语义变更
+// 需两处同步」），下沉后脱敏口径只改这一处。
+func MatchMaskKey(keys map[string]struct{}, key string) bool {
 	for k := range keys {
 		if strings.EqualFold(k, key) {
 			return true
@@ -54,14 +56,49 @@ func matchMaskKey(keys map[string]struct{}, key string) bool {
 	return false
 }
 
-// maskKvs 返回键命中脱敏键集的 kv 拷贝（值替换为 "***"）。未命中任何键时
-// 原样返回（热路径零拷贝）；不改动入参切片。键归一与键匹配口径与 filterKvs
-// 一致（#85/#174）。供后端渲染面下沉脱敏使用（#194）：字段渲染与降级
-// rawKv 必须共用同一份已脱敏 kv，否则敏感值会经 rawKv 旁路落盘。
-func maskKvs(keys map[string]struct{}, kvs []any) []any {
+// matchMaskKeyScoped 是「裸键 + 组前缀键」双匹配原语（logx#229）：键集命中
+// 本地键，或命中 prefix 拼上本地键的完整点路径。prefix 为空串时退化为裸键
+// 匹配（无组链 / 组外属性；组链前缀一律经 groupsPrefix 取——joinGroups 对
+// 空输入返回 "."，不能直接作 prefix）。
+//
+// 包装层（filterLogger.matchKeyScoped）与渲染面（MaskKvs/MaskAttrs 及
+// json/slog 内联点）对偶共用：
+//
+//   - 包装层见到的是本地键（组前缀由 base 在 emit 时才加）：配点路径
+//     FilterKey("user.password") 时拿「组链拼接键」兜底命中本地键 password
+//     （#224 的包装层修复）；
+//   - 渲染面见到的键也是本地键、组前缀在渲染时才拼上（持久属性按挂载时刻
+//     attrPrefixes/attrChains 快照、调用 kv 按当前组链）：配裸键或配点路径
+//     都要命中——此前渲染面只做裸键匹配，配 "user.password" 时组内裸键
+//     password 属性明文落盘（#194 下沉与 #224 组链两个机制未对齐，脱敏
+//     fail-open）。
+//
+// 两层叠加后，"password" 与 "user.password" 两种配置在包装与渲染两面闭合。
+func matchMaskKeyScoped(keys map[string]struct{}, prefix, key string) bool {
+	if MatchMaskKey(keys, key) {
+		return true
+	}
+	if prefix == "" {
+		return false
+	}
+	return MatchMaskKey(keys, prefix+key)
+}
+
+// MaskKvs 返回键命中脱敏键集的 kv 拷贝（值替换为 "***"）。未命中任何键时
+// 原样返回（热路径零拷贝）；不改动入参切片。键归一与键匹配口径与包装层
+// filterKvs 一致（#85/#174）。供后端渲染面下沉脱敏使用（#194）：字段渲染
+// 与降级 rawKv 必须共用同一份已脱敏 kv，否则敏感值会经 rawKv 旁路落盘。
+// groupPrefix 是渲染时将施加在调用 kv 键上的当前组链平铺前缀（无组传空串），
+// 脱敏按「裸键 + 前缀键」双匹配（logx#229）——配 FilterKey("user.password")
+// 时 WithGroup("user") 下的裸键 password 在渲染面同样命中。#230 导出：
+// hlog 子包同源副本收敛至此。
+func MaskKvs(keys map[string]struct{}, groupPrefix string, kvs []any) []any {
+	if len(keys) == 0 || len(kvs) == 0 {
+		return kvs
+	}
 	hit := false
 	for i := 0; i+1 < len(kvs); i += 2 {
-		if matchMaskKey(keys, keyString(kvs[i])) {
+		if matchMaskKeyScoped(keys, groupPrefix, keyString(kvs[i])) {
 			hit = true
 			break
 		}
@@ -72,20 +109,26 @@ func maskKvs(keys map[string]struct{}, kvs []any) []any {
 	out := make([]any, len(kvs))
 	copy(out, kvs)
 	for i := 0; i+1 < len(out); i += 2 {
-		if matchMaskKey(keys, keyString(out[i])) {
+		if matchMaskKeyScoped(keys, groupPrefix, keyString(out[i])) {
 			out[i+1] = "***"
 		}
 	}
 	return out
 }
 
-// maskAttrs 返回键命中脱敏键集的属性拷贝（值替换为 "***"）。未命中任何键
-// 时原样返回；不改动入参切片。与 maskAttrs 方法（包装层派生面，#85）同
-// 口径的渲染面形态（#194）。
-func maskAttrsSlice(keys map[string]struct{}, attrs []Attr) []Attr {
+// MaskAttrs 返回键命中脱敏键集的属性拷贝（值替换为 "***"）。未命中任何键
+// 时原样返回；不改动入参切片。与包装层 maskAttrs 方法（#85/#224）同口径的
+// 渲染面形态（#194）：每条属性按其**挂载时刻**组前缀（attrPrefixes[i]，与
+// Attrs 平行的快照，缺失时退回 groupPrefix——json/std 渲染面同款防御）做
+// 「裸键 + 前缀键」双匹配（logx#229）。hlog 等无组链后端传 nil/"" 即退化为
+// 裸键匹配。#230 导出：hlog 子包同源副本收敛至此。
+func MaskAttrs(keys map[string]struct{}, attrs []Attr, attrPrefixes []string, groupPrefix string) []Attr {
+	if len(keys) == 0 || len(attrs) == 0 {
+		return attrs
+	}
 	hit := false
-	for _, a := range attrs {
-		if matchMaskKey(keys, a.Key) {
+	for i := range attrs {
+		if matchMaskKeyScoped(keys, attrMountPrefix(i, attrPrefixes, groupPrefix), attrs[i].Key) {
 			hit = true
 			break
 		}
@@ -96,11 +139,41 @@ func maskAttrsSlice(keys map[string]struct{}, attrs []Attr) []Attr {
 	out := make([]Attr, len(attrs))
 	copy(out, attrs)
 	for i := range out {
-		if matchMaskKey(keys, out[i].Key) {
+		if matchMaskKeyScoped(keys, attrMountPrefix(i, attrPrefixes, groupPrefix), out[i].Key) {
 			out[i].Value = "***"
 		}
 	}
 	return out
+}
+
+// attrMountPrefix 返回第 i 条持久属性的挂载时刻组前缀（#192/#222）：快照
+// 缺失时退回当前组前缀（理论不可达——WithAttrs 是 Attrs 的唯一追加方且
+// 同步推进快照；防御与 json.go/std.go 渲染面同款）。
+func attrMountPrefix(i int, attrPrefixes []string, groupPrefix string) string {
+	if i < len(attrPrefixes) {
+		return attrPrefixes[i]
+	}
+	return groupPrefix
+}
+
+// MergeMaskKeys 并入脱敏键集（#194）：无既有键集时直接共享入参 map（只读
+// 契约），否则拷贝并集——入参不得被改写。#230 导出：hlog 子包同源副本
+// 收敛至此（嵌套 WithFilter 时多个键集叠加生效，不互相覆盖）。
+func MergeMaskKeys(base, keys map[string]struct{}) map[string]struct{} {
+	if len(keys) == 0 {
+		return base
+	}
+	if len(base) == 0 {
+		return keys
+	}
+	merged := make(map[string]struct{}, len(base)+len(keys))
+	for k := range base {
+		merged[k] = struct{}{}
+	}
+	for k := range keys {
+		merged[k] = struct{}{}
+	}
+	return merged
 }
 
 // FilterFunc 命中即丢弃整条记录（在脱敏之后评估）。
@@ -200,15 +273,10 @@ func (f *filterLogger) pass(level Level) bool {
 // 必须命中本地键 "password"——组前缀由 base 在 emit 时才加，只比对本地
 // 键则点路径永不命中、敏感值原样落盘（脱敏 fail-open）。
 // 双命中口径：裸键名与完整点路径都脱敏——配 "password" 与配
-// "user.password" 的用户都得到预期保护。
+// "user.password" 的用户都得到预期保护。logx#229：收敛到与渲染面共用的
+// matchMaskKeyScoped 原语（前缀取本 wrapper 组链；两层对偶，语义注释见彼处）。
 func (f *filterLogger) matchKeyScoped(local string) bool {
-	if f.cfg.matchKey(local) {
-		return true
-	}
-	if len(f.groupChain) == 0 {
-		return false
-	}
-	return f.cfg.matchKey(joinGroups(f.groupChain) + local)
+	return matchMaskKeyScoped(f.cfg.keys, groupsPrefix(f.groupChain), local)
 }
 
 // filterKvs 返回脱敏后的 kv 切片（不入参原切片）。

@@ -153,27 +153,8 @@ func (l *slogLogger) WithAttrs(attrs ...Attr) Logger {
 // 不可变）。
 func (l *slogLogger) WithAttrKeyMask(keys map[string]struct{}) Logger {
 	c := l.clone()
-	c.attrMask = mergeMaskKeys(l.attrMask, keys)
+	c.attrMask = MergeMaskKeys(l.attrMask, keys)
 	return c
-}
-
-// mergeMaskKeys 并入脱敏键集（#194）：无既有键集时直接共享入参 map（只读
-// 契约），否则拷贝并集——入参不得被改写。
-func mergeMaskKeys(base, keys map[string]struct{}) map[string]struct{} {
-	if len(keys) == 0 {
-		return base
-	}
-	if len(base) == 0 {
-		return keys
-	}
-	merged := make(map[string]struct{}, len(base)+len(keys))
-	for k := range base {
-		merged[k] = struct{}{}
-	}
-	for k := range keys {
-		merged[k] = struct{}{}
-	}
-	return merged
 }
 
 // WithGroup 返回带字段命名空间的子 logger（#75 #83 #99）。
@@ -306,17 +287,19 @@ func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string,
 		attrs = append(attrs, slog.String("service", l.Service))
 	}
 	if traceID := ExtractTrace(ctx); traceID != "" {
-		attrs = append(attrs, slog.String("trace_id", traceID))
+		attrs = append(attrs, slog.String(TraceIDFieldKey, traceID))
 	}
 	if caller != "" {
 		attrs = append(attrs, slog.String("caller", caller))
 	}
 
 	// #194：脱敏键集下沉（WithFilter 检测 AttrKeyMasker 时设置）——持久
-	// 属性与调用 kv 一并遮蔽，敏感值不得绕过过滤直渲。
+	// 属性与调用 kv 一并遮蔽，敏感值不得绕过过滤直渲。logx#229：调用 kv
+	// 渲染时按当前组链施加前缀，脱敏按「裸键 + 前缀键」双匹配——配点路径
+	// FilterKey 时组内裸键 kv 在渲染面同样命中。
 	mask := l.attrMask
 	if mask != nil && len(keysAndValues) > 0 {
-		keysAndValues = maskKvs(mask, keysAndValues)
+		keysAndValues = MaskKvs(mask, groupsPrefix(l.groups), keysAndValues)
 	}
 
 	// 用户字段（Attr/kv）按**挂载时刻**的组链经 slog.Group 显式包裹（#192）：
@@ -342,16 +325,18 @@ func (l *slogLogger) emitToHandler(ctx context.Context, level Level, msg string,
 
 // buildNestedUserAttrs 构建注入 Handler 路径的用户字段（#192）：持久属性按
 // 各自挂载时刻的组链、调用 kv 按当前组链，经 groupNest 合成嵌套结构。
+// logx#229：属性嵌在挂载时刻组链下，脱敏按「裸键 + 组链前缀键」双匹配——
+// 配点路径 FilterKey 时组内持久属性同样命中。
 func buildNestedUserAttrs(l *slogLogger, mask map[string]struct{}, keysAndValues []any) []slog.Attr {
 	var n groupNest
 	for i, a := range l.Attrs {
-		v := logValue(a.Value)
-		if mask != nil && matchMaskKey(mask, a.Key) {
-			v = "***"
-		}
 		chain := l.groups // 防御：快照缺失时退回旧行为（整体进当前组链）
 		if i < len(l.attrChains) {
 			chain = l.attrChains[i]
+		}
+		v := logValue(a.Value)
+		if mask != nil && matchMaskKeyScoped(mask, groupsPrefix(chain), a.Key) {
+			v = "***"
 		}
 		n.add(chain, slog.Any(a.Key, v))
 	}
@@ -420,23 +405,21 @@ func (n *groupNest) build() []slog.Attr {
 
 // stampedAttrs 返回持久属性的降级面拷贝（仅 marshalFallback 冷路径调用，
 // #193）：键按挂载时刻的组前缀固化（#192），值按脱敏键集遮蔽（#194）。
+// logx#229：遮蔽同样「裸键 + 挂载组前缀键」双匹配，与正常路径（json.go
+// put / buildNestedUserAttrs）同口径。
 func (l *slogLogger) stampedAttrs() []Attr {
 	if len(l.Attrs) == 0 {
 		return nil
 	}
+	gp := groupsPrefix(l.groups)
 	out := make([]Attr, len(l.Attrs))
 	for i, a := range l.Attrs {
+		prefix := attrMountPrefix(i, l.attrPrefixes, gp)
 		v := logValue(a.Value)
-		if l.attrMask != nil && matchMaskKey(l.attrMask, a.Key) {
+		if l.attrMask != nil && matchMaskKeyScoped(l.attrMask, prefix, a.Key) {
 			v = "***"
 		}
-		k := a.Key
-		if i < len(l.attrPrefixes) {
-			k = l.attrPrefixes[i] + a.Key
-		} else if len(l.groups) > 0 {
-			k = joinGroups(l.groups) + a.Key
-		}
-		out[i] = Attr{Key: k, Value: v}
+		out[i] = Attr{Key: prefix + a.Key, Value: v}
 	}
 	return out
 }

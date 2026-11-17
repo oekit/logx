@@ -39,7 +39,7 @@ func TraceHandler(inner slog.Handler, opts ...TraceHandlerOption) slog.Handler {
 	if inner == nil {
 		panic("logx: TraceHandler called with nil handler")
 	}
-	cfg := &traceHandlerConfig{key: "trace_id"}
+	cfg := &traceHandlerConfig{key: TraceIDFieldKey}
 	for _, opt := range opts {
 		opt(cfg)
 	}
