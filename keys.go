@@ -12,3 +12,9 @@ package logx
 //
 //	log.CtxError(ctx, "create failed", logx.ErrKey, err)
 const ErrKey = "err"
+
+// TraceIDFieldKey 是链路追踪 ID 的标准字段名，全矩阵固定为 "trace_id"。
+// 内置 JSON 框架字段、注入 Handler 框架字段与 TraceHandler 默认注入键共用
+// 本常量（logx#231：此前 5 处手写魔法字面量，改键名要逐处找）；禁止手写
+// "trace_id" 字面量（与 ErrKey 同一纪律）。
+const TraceIDFieldKey = "trace_id"

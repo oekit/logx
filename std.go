@@ -124,7 +124,7 @@ func (l *stdLogger) withBase(apply func(cp *BaseLogger)) Logger {
 // 键集并入已有键集（嵌套包裹叠加，与 slog 后端同口径）；keys 只读共享。
 func (l *stdLogger) WithAttrKeyMask(keys map[string]struct{}) Logger {
 	c := l.withBase(func(cp *BaseLogger) {}).(*stdLogger)
-	c.attrMask = mergeMaskKeys(l.attrMask, keys)
+	c.attrMask = MergeMaskKeys(l.attrMask, keys)
 	return c
 }
 
@@ -189,14 +189,20 @@ func (l *stdLogger) log(level Level, ctx context.Context, msg string, keysAndVal
 	}
 	prefix := l.buildPrefix(ctx, level)
 
+	// logx#222：组链平铺前缀——属性按挂载时刻前缀、调用 kv 按当前组链
+	// 前缀（与 json/slog 后端 joinGroups 口径一致）。logx#229：渲染面脱敏
+	// 需要 gp 做「裸键 + 前缀键」双匹配，提前到脱敏之前计算。
+	gp := l.groupPrefix()
+
 	// #194：下沉键集非空时持久属性与调用 kv 一并脱敏——敏感值不得绕过
-	// 过滤直渲（未命中零拷贝）。
+	// 过滤直渲（未命中零拷贝）。logx#229：脱敏按「裸键 + 组前缀键」双匹配
+	// ——配点路径 FilterKey 时组内裸键属性/kv 在渲染面同样命中。
 	attrs := l.Attrs
 	if l.attrMask != nil && len(attrs) > 0 {
-		attrs = maskAttrsSlice(l.attrMask, attrs)
+		attrs = MaskAttrs(l.attrMask, attrs, l.attrPrefixes, gp)
 	}
 	if l.attrMask != nil && len(keysAndValues) > 0 {
-		keysAndValues = maskKvs(l.attrMask, keysAndValues)
+		keysAndValues = MaskKvs(l.attrMask, gp, keysAndValues)
 	}
 	// logx#223：emit 侧值截断（默认关闭）
 	if a2, ok := truncateAttrs(attrs); ok {
@@ -206,12 +212,7 @@ func (l *stdLogger) log(level Level, ctx context.Context, msg string, keysAndVal
 		keysAndValues = k2
 	}
 
-	// logx#222：组链平铺前缀——属性按挂载时刻前缀、调用 kv 按当前组链
-	// 前缀（与 json/slog 后端 joinGroups 口径一致）。
-	gp := l.groupPrefix()
-	if gp != "" {
-		keysAndValues = prefixKvKeys(keysAndValues, gp)
-	}
+	keysAndValues = prefixedKvs(gp, keysAndValues)
 	kvStr := formatAttrsGrouped(attrs, l.attrPrefixes, gp)
 	if len(keysAndValues) > 0 {
 		if s := FormatKeysAndValues(keysAndValues...); s != "" {
@@ -229,14 +230,11 @@ func (l *stdLogger) log(level Level, ctx context.Context, msg string, keysAndVal
 	}
 }
 
-// groupPrefix 返回当前组链的平铺前缀；无组返回空串。
-// ⚠️ joinGroups 对空输入也返回 "."（json 后端靠 len(groups)>0 守卫），
-// std 侧调用一律走本方法（logx#222 实现期实测）。
+// groupPrefix 返回当前组链的平铺前缀；无组返回空串（守卫收敛到包级
+// groupsPrefix——logx#229 起 json/slog 渲染面同样需要「空组→空串」口径，
+// 单源避免各后端再抄一份 len 守卫）。
 func (l *stdLogger) groupPrefix() string {
-	if len(l.groups) == 0 {
-		return ""
-	}
-	return joinGroups(l.groups)
+	return groupsPrefix(l.groups)
 }
 
 // formatAttrsGrouped 按挂载时刻前缀渲染持久属性（logx#222）：前缀取
@@ -267,18 +265,6 @@ func formatAttrsGrouped(attrs []Attr, attrPrefixes []string, gp string) string {
 	return sb.String()
 }
 
-// prefixKvKeys 把调用 kv 的键加上组前缀（logx#222，拷贝不改入参——
-// #220 同款「不持有调用方切片」纪律）。非 string 键经 keyString 归一
-// （与 json/slog 平铺口径一致）。
-func prefixKvKeys(kvs []any, gp string) []any {
-	out := make([]any, len(kvs))
-	copy(out, kvs)
-	for i := 0; i < len(out); i += 2 {
-		out[i] = gp + keyString(out[i])
-	}
-	return out
-}
-
 func (l *stdLogger) logf(level Level, ctx context.Context, format string, args ...any) {
 	ctx = CtxOrBackground(ctx) // #97：Ctx* 入参 nil ctx 统一兜底
 	if !l.ShouldLog(level) {
@@ -293,10 +279,10 @@ func (l *stdLogger) logf(level Level, ctx context.Context, format string, args .
 	// #165：属性拼装与结构化路径（log）统一走同族格式化函数，消除
 	// printf/结构化两条路径的残留分叉（无 kv 参数时即纯属性串，输出不变）。
 	// #194：下沉键集非空时持久属性同样脱敏（printf 无调用 kv 可脱敏，
-	// #80 口径）。
+	// #80 口径）。logx#229：裸键 + 挂载组前缀键双匹配，与结构化路径同口径。
 	attrs := l.Attrs
 	if l.attrMask != nil && len(attrs) > 0 {
-		attrs = maskAttrsSlice(l.attrMask, attrs)
+		attrs = MaskAttrs(l.attrMask, attrs, l.attrPrefixes, l.groupPrefix())
 	}
 	// logx#223：emit 侧值截断（默认关闭）
 	if a2, ok := truncateAttrs(attrs); ok {
