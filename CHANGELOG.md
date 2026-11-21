@@ -2,6 +2,15 @@
 
 由 ekit v0.34.0（git.enjoye.top/enjoydream/ekit，冻结维护）拆分而来。所有 notable 变更记录如下。
 
+## [v0.12.1] — 2026-11-21
+
+- 第三轮设计/缺陷审计（2026-11-21）logx 修复：
+
+- fix: SlogHandler 桥接层递归展开 slog Group 属性（点分键平铺）并对 KindLogValuer 先 Resolve——三方库经 logx.Slogger 接入的嵌套字段不再渲染成 {"Value":{}} 空对象（#238）
+- fix: Delegating 组件 logger 缓存键纳入级别代际（SetLevel 递增）——Default().SetLevel(Debug) 后组件日志不再被旧缓存级别静默过滤（split-brain 修复）（#238）
+
+关联问题单：logx#238。
+
 ## [v0.12.0] — 2026-11-18
 
 - 安全修复:渲染面脱敏补组链前缀双匹配,FilterKey 点路径配置下裸键不再 fail-open 明文落盘(#224 后包装层/渲染层口径重对齐)(#229);根包导出脱敏工具面 MergeMaskKeys/MatchMaskKey/MaskKvs/MaskAttrs,hlog 删 4 份逐字副本(#230);prefixKvKeys/prefixedKvs 双份合一,trace_id 字面量常量化 TraceIDFieldKey(#231)
