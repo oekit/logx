@@ -81,6 +81,46 @@ func TestDelegating_FollowsSetDefault(t *testing.T) {
 	}
 }
 
+// TestDelegating_ComponentCacheInvalidatedBySetLevel 回归（#238）：
+// Delegating(component) 缓存 Default().WithAttrs(...) 派生实例（#221），而
+// std/slog/hlog 的 WithAttrs 经 BaseLogger.Derive 拷走当时的 Level。缓存
+// 此前只按 defaultLoggerV 指针身份失效——Default().SetLevel(...) 不换指针，
+// 组件日志第一次解析后继续按旧级别判定：Enabled 守卫错、DEBUG 输出被静默
+// 过滤（split-brain）。修复后 SetLevel 递增级别代际，缓存随即失效。
+//
+// 变异性负对照：去掉缓存的 gen 判定后 Enabled(Debug) 仍为 false、Debug
+// 记录数为 0。
+func TestDelegating_ComponentCacheInvalidatedBySetLevel(t *testing.T) {
+	h := newCaptureHandler()
+	backend := NewSlogLogger("svc", WithHandler(h), WithLevel(LevelInfo))
+	swapDefault(t, backend)
+
+	d := Delegating("comp")
+
+	// 首次判定触发缓存：派生实例固化 Info 级别
+	if Enabled(d, LevelDebug) {
+		t.Fatal("初始 Info 档下 Debug 应被过滤")
+	}
+	if recs := h.snapshot(); len(recs) != 0 {
+		t.Fatalf("Debug 过滤期不应有任何记录, got %d", len(recs))
+	}
+
+	// 运行期对 Default() 本体调级（不换指针）：组件 logger 必须立即跟随
+	backend.SetLevel(LevelDebug)
+	if !Enabled(d, LevelDebug) {
+		t.Fatal("#238：Default().SetLevel(Debug) 后组件 logger 的 Enabled(Debug) 必须为 true（缓存级别未失效）")
+	}
+	d.Debug("debug-after-setlevel")
+
+	recs := h.snapshot()
+	if len(recs) != 1 {
+		t.Fatalf("#238：调级后 Debug 记录数 = %d, want 1（缓存旧级别仍过滤）", len(recs))
+	}
+	if h.state.msgs[0] != "debug-after-setlevel" {
+		t.Errorf("msg = %q", h.state.msgs[0])
+	}
+}
+
 // TestDelegating_ComponentAttr 验证 component 参数渲染为 component=<name> 属性。
 func TestDelegating_ComponentAttr(t *testing.T) {
 	r := &recordLogger{}

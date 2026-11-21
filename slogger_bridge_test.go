@@ -167,5 +167,96 @@ func TestSlogHandler_FastPathSkipsCallerScan(t *testing.T) {
 	}
 }
 
+// stringValuer / groupValuer 是 slog.LogValuer 测试桩（#238）。
+type stringValuer string
+
+func (v stringValuer) LogValue() slog.Value { return slog.StringValue(string(v)) }
+
+type groupValuer struct{}
+
+func (groupValuer) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("a", "b"), slog.Int("n", 1))
+}
+
+// TestSlogHandler_ExpandsGroupsAndLogValuer 回归（#238）：桥接层此前直接
+//
+//	append(a.Key, a.Value.Any())：KindGroup 的 Any() 是 []slog.Attr，内置
+//	JSON 后端 json.Marshal 后渲染成 {"Value":{}}（slog.Attr/Value 无导出
+//	字段、无 MarshalJSON），经 logx.Slogger 接入的三方库（WithGroup /
+//	slog.Group）嵌套字段静默变空对象；KindLogValuer 也未 Resolve。
+//
+// 修复后 group 递归平铺为点分键（与内置 WithGroup 口径一致）、LogValuer
+// 显式 Resolve（含解析结果为 group 的形态），空键组内联。
+func TestSlogHandler_ExpandsGroupsAndLogValuer(t *testing.T) {
+	base := &fakeLogger{}
+	sl := Slogger(base)
+
+	sl.Info("nested",
+		slog.Group("http",
+			slog.String("method", "GET"),
+			slog.Group("peer", slog.String("ip", "10.0.0.1")),
+		),
+		slog.Any("user", stringValuer("alice")),
+		slog.Any("gv", groupValuer{}),
+		slog.Group("", slog.String("flat", "v")),
+	)
+	// WithAttrs 路径：挂载时刻固化组前缀，组内嵌套同样展开
+	sl.WithGroup("outer").With(
+		slog.Group("cfg", slog.Group("db", slog.String("dsn", "postgres://x"))),
+	).Info("with-attrs", slog.Group("rec", slog.Int("n", 7)))
+
+	if len(base.entries) != 2 {
+		t.Fatalf("entries = %d, want 2: %v", len(base.entries), base.text())
+	}
+	cases := []struct {
+		idx  int
+		want []any
+	}{
+		{0, []any{
+			"http.method", "GET",
+			"http.peer.ip", "10.0.0.1",
+			"user", "alice",
+			"gv.a", "b",
+			"gv.n", int64(1),
+			"flat", "v",
+		}},
+		{1, []any{"outer.cfg.db.dsn", "postgres://x", "outer.rec.n", int64(7)}},
+	}
+	for _, tc := range cases {
+		got := base.entries[tc.idx].kvs
+		if len(got) != len(tc.want) {
+			t.Fatalf("entry %d kvs = %v, want %v", tc.idx, got, tc.want)
+		}
+		for i := range tc.want {
+			if got[i] != tc.want[i] {
+				t.Fatalf("entry %d kvs[%d] = %v, want %v (all: %v)", tc.idx, i, got[i], tc.want[i], got)
+			}
+		}
+		for i := 0; i < len(got); i += 2 {
+			if _, isGroup := got[i+1].([]slog.Attr); isGroup {
+				t.Fatalf("entry %d 残留未展开的 KindGroup 值: %v", tc.idx, got[i+1])
+			}
+		}
+	}
+}
+
+// TestSlogHandler_GroupToJSONNotNull 端到端钉住 #238 的原始症状：内置 JSON
+// 后端输出嵌套组时必须是平铺字段，绝不能出现 {"Value":{}} 空对象。
+func TestSlogHandler_GroupToJSONNotNull(t *testing.T) {
+	read, _ := captureStdout(t)
+	sl := Slogger(NewSlogLogger("svc"))
+
+	sl.Info("group-json", slog.Group("http", slog.String("method", "GET")))
+
+	out := read()
+	rec := readJSONRecord(t, out)
+	if rec["http.method"] != "GET" {
+		t.Fatalf("nested group not flattened: %v (%s)", rec, out)
+	}
+	if strings.Contains(out, `"Value"`) {
+		t.Fatalf("KindGroup leaked as slog.Value object: %s", out)
+	}
+}
+
 // TestSlogHandler_WrappedChainCaller 见 slog_caller_ext_test.go（外部测试包）：
 // 包装链（auditLogger，未实现 PC 直通）走栈回溯路径，需真实包外探针帧。
