@@ -166,8 +166,11 @@ func (b *BaseLogger) Enabled(level Level) bool {
 // SetLevel 设置该 logger 实例的日志级别。
 //
 // #171：Level 是原子量，写路径不再需要 Mu（并发读经 atomic Load 可见）。
+// #238：递增级别代际——Delegating 的 component 缓存里是派生时拷贝了旧
+// Level 的实例，不失效会让组件日志在运行期调级后仍按旧档过滤。
 func (b *BaseLogger) SetLevel(level Level) {
 	b.Level.Store(level)
+	bumpLevelGeneration()
 }
 
 // Prefix 返回 service 前缀（如 "[my-service]"）。

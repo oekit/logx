@@ -38,24 +38,36 @@ func Delegating(component string) Logger {
 		// 只挡级别、不挡这次 resolve。SetDefault 换指针即自动失效。
 		// 整对(cached)单指针原子存取——分两个 atomic 字段会有「src 与 child
 		// 来自不同代」的错配窗口。
+		//
+		// #238：失效条件另含级别代际——派生实例（std/slog/hlog 的
+		// WithAttrs 经 BaseLogger.Derive、Delegating/filter 派生拷 gate）
+		// 固化了派生时刻的级别，而 Default().SetLevel(...) 不换指针；只按
+		// src 失效会让组件日志在运行期调级后继续按旧档过滤（Enabled 与
+		// 输出同时错）。代际在派生**之前**读取：若 SetLevel 在读取与派生
+		// 之间发生，存入的是旧代际 + 新级别，下次解析会再重建（多一次
+		// 派生，不会把旧级别永久缓存）。
 		cache := &componentCache{}
 		d.resolve = func() Logger {
 			cur := defaultLoggerV.Load()
-			if e := cache.load(); e != nil && e.src == cur {
+			gen := levelGeneration()
+			if e := cache.load(); e != nil && e.src == cur && e.gen == gen {
 				return e.child
 			}
 			child := Default().WithAttrs(Attr{Key: "component", Value: name})
-			cache.store(&cachedComponent{src: cur, child: child})
+			cache.store(&cachedComponent{src: cur, gen: gen, child: child})
 			return child
 		}
 	}
 	return d
 }
 
-// cachedComponent 是 Delegating 的一次解析结果与它对应的 Default 单元
-// （defaultLoggerV 的指针身份即代际——SetDefault 每次 Store 新指针）。
+// cachedComponent 是 Delegating 的一次解析结果与它对应的 Default 单元 /
+// 级别代际（#238）：
+//   - src：defaultLoggerV 的指针身份即 SetDefault 代际（每次 Store 新指针）；
+//   - gen：levelGeneration 快照，任一 SetLevel 递增（缓存实例拷贝了旧级别）。
 type cachedComponent struct {
 	src   *Logger
+	gen   uint64
 	child Logger
 }
 
@@ -280,4 +292,7 @@ func (d delegatingLogger) Unwrap() Logger { return d.resolve() }
 // Default()（或对应后端实例）本身调级，那是全局/实例操作，delegating 不代劳。
 func (d delegatingLogger) SetLevel(level Level) {
 	d.gate.set(level)
+	// #238：Default() 本身可能是 Delegating（SetDefault(Delegating(...))），
+	// 其 With* 派生会拷走 gate——调级同样使 component 缓存失效。
+	bumpLevelGeneration()
 }

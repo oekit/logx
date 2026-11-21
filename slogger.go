@@ -47,7 +47,7 @@ func (h *slogxHandler) Handle(ctx context.Context, r slog.Record) error {
 	// 此前输出时刻统一回填最终前缀，WithAttrs 先于 WithGroup 的属性被错误
 	// 卷进组，违反 slog「subsequent attributes」契约。
 	for _, a := range h.attrs {
-		kvs = append(kvs, a.Key, a.Value.Any())
+		kvs = appendSlogAttr(kvs, a.Key, a.Value)
 	}
 	// Record attrs：Handle 时刻组即当前组，按契约施加前缀。
 	prefix := ""
@@ -58,7 +58,7 @@ func (h *slogxHandler) Handle(ctx context.Context, r slog.Record) error {
 		if a.Equal(slog.Attr{}) {
 			return true
 		}
-		kvs = append(kvs, prefix+a.Key, a.Value.Any())
+		kvs = appendSlogAttr(kvs, prefix+a.Key, a.Value)
 		return true
 	})
 
@@ -82,6 +82,40 @@ func (h *slogxHandler) Handle(ctx context.Context, r slog.Record) error {
 		h.l.CtxInfo(ctx, r.Message, kvs...)
 	}
 	return nil
+}
+
+// appendSlogAttr 把单个 slog.Attr 递归展开为 logx 的扁平 kv 对（#238）：
+//
+//   - KindLogValuer：先 Value.Resolve()（stdlib 的实现会循环解析至非
+//     LogValuer，并对 LogValue panic 兜底），再按解析结果的 Kind 处理；
+//   - KindGroup：递归展开，键以 "." 连接（与 WithGroup 的内置 JSON 平铺
+//     口径一致）；组内空键属性直接内联到当前层级；
+//   - 其他：Value.Any()。
+//
+// 修复前直接 append(Key, Value.Any())：KindGroup 的 Any() 返回 []slog.Attr，
+// 内置 JSON 后端 json.Marshal 后是 {"Value":{}}（slog.Attr/Value 无导出
+// 字段、无 MarshalJSON），经 logx.Slogger 接入的三方库（WithGroup/slog.Group）
+// 嵌套字段静默变空对象；KindLogValuer 也未 Resolve，渲染成原值持有者。
+func appendSlogAttr(kvs []any, key string, v slog.Value) []any {
+	v = v.Resolve()
+	if v.Kind() != slog.KindGroup {
+		return append(kvs, key, v.Any())
+	}
+	for _, a := range v.Group() {
+		if a.Equal(slog.Attr{}) {
+			continue // 空属性丢弃（stdlib 同口径）
+		}
+		child := a.Key
+		if key != "" {
+			if child != "" {
+				child = key + "." + child
+			} else {
+				child = key
+			}
+		}
+		kvs = appendSlogAttr(kvs, child, a.Value)
+	}
+	return kvs
 }
 
 func (h *slogxHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

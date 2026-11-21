@@ -558,4 +558,8 @@ func (f *filterLogger) Unwrap() Logger { return f.base }
 // 生效——wrapper 只能收紧，不能放宽（base 自己的 ShouldLog 仍拦截）。
 func (f *filterLogger) SetLevel(level Level) {
 	f.gate.set(level)
+	// #238：实例级下限同样被 With* 派生拷入，Delegating 的 component 缓存
+	// 须随之失效（filter 可能作为 Default() 被包一层，缓存子实例拷贝了
+	// 派生时刻的 gate）。
+	bumpLevelGeneration()
 }

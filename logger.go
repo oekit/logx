@@ -96,6 +96,24 @@ type Attr struct {
 // 默认 logger 实例（基于标准库 log），使用 atomic.Pointer 保护并发安全。
 var defaultLoggerV atomic.Pointer[Logger]
 
+// levelGenerationV 是进程级级别代际（#238）：任一实例的 SetLevel 写路径递增。
+//
+// Delegating(component) 为热路径缓存了 Default().WithAttrs(...) 派生实例
+// （#221）；std/slog/hlog 的 WithAttrs 经 BaseLogger.Derive 拷走当时的
+// Level，Delegating/filter 派生则拷走当时的实例级下限。缓存此前只按
+// defaultLoggerV 指针身份失效（仅 SetDefault 换指针）：运行期
+// Default().SetLevel(...) 不换指针，组件日志（httpx 等 SDK 包级 logger）
+// 在第一次解析后继续用旧级别——Enabled 守卫与输出都按旧档判定（split-brain）。
+// 代际纳入缓存键后，任何 SetLevel 都使既有缓存条目失效、下次解析重建。
+var levelGenerationV atomic.Uint64
+
+// levelGeneration 返回当前级别代际；SetLevel 实现须在写级别后调用
+// bumpLevelGeneration（BaseLogger / Delegating / filterLogger 三处写路径）。
+func levelGeneration() uint64 { return levelGenerationV.Load() }
+
+// bumpLevelGeneration 递增级别代际，使 Delegating 的 component 缓存失效。
+func bumpLevelGeneration() { levelGenerationV.Add(1) }
+
 func init() {
 	l := NewStdLogger("default")
 	// 读取 LOG_LEVEL 环境变量，修复之前只设 hlog 级别的 split-brain
